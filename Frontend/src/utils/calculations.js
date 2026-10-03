@@ -3,7 +3,7 @@ import { getServiceCapabilities } from '../services/serviceRegistry'
 export const paymentValue = (payment) => payment.type === 'Refund' || payment.status === 'Refunded'
   ? -Math.abs(Number(payment.amount || 0))
   : Number(payment.amount || 0)
-//d
+//
 export const clientProjects = (data, clientId) => data.projects.filter((project) => project.clientId === clientId)
 
 export const projectPayments = (data, project) => data.payments.filter((payment) =>
