@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState } from 'react'
 import { initialData } from '../data/mockData'
 import { dealPaid, invoicePaid, invoiceStatus, paymentValue, projectPaid } from '../utils/calculations'
 import { enrichServices } from '../services/serviceRegistry'
+import { useAuth } from './AuthContext'
 
 const DataContext = createContext(null)
 const STORAGE_KEY = 'magaf-os-data-v1'
@@ -25,6 +26,11 @@ const readData = () => {
       invoices: persisted.invoices || initialData.invoices,
       targets:{...initialData.targets,...persisted.targets},
       students:migratedStudents,
+      conversations:persisted.conversations||initialData.conversations,
+      messages:persisted.messages||initialData.messages,
+      messageReads:persisted.messageReads||initialData.messageReads,
+      activities:persisted.activities||initialData.activities,
+      notifications:persisted.notifications||initialData.notifications,
       payments:shouldMigrate?[
         ...(persisted.payments||initialData.payments),
         ...initialData.payments.filter((payment)=>payment.studentId&&!(persisted.payments||[]).some((item)=>item.id===payment.id)),
@@ -38,10 +44,20 @@ const readData = () => {
 
 export function DataProvider({ children }) {
   const [data, setData] = useState(readData)
+  const { user } = useAuth()
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)) }
     catch (error) { console.error('Unable to persist demo data.', error) }
   }, [data])
+  useEffect(() => {
+    const syncFromStorage=(event)=>{
+      if(event.key!==STORAGE_KEY||!event.newValue)return
+      try{setData(JSON.parse(event.newValue))}
+      catch(error){console.error('Unable to sync shared demo data.',error)}
+    }
+    window.addEventListener('storage',syncFromStorage)
+    return()=>window.removeEventListener('storage',syncFromStorage)
+  },[])
   const update = (collection, updater) => setData((current) => ({ ...current, [collection]: typeof updater === 'function' ? updater(current[collection] || []) : updater }))
   const add = (collection, item, prefix = collection.slice(0, 2)) => {
     const date = new Date().toISOString().slice(0, 10)
@@ -58,7 +74,7 @@ export function DataProvider({ children }) {
       : {}
     update(collection, (records) => records.map((record) => record.id === recordId ? { ...record, ...projectChanges, ...changes, updatedAt: today } : record))
     if (collection === 'projects' && previous?.status !== changes.status && changes.status) {
-      addActivity('project', changes.status === 'Completed' ? 'Project completed' : 'Project status updated', `${previous?.name || 'Project'} · ${changes.status}`, recordId)
+      addActivity('project', changes.status === 'Completed' ? 'Project completed' : 'Project status updated', `${previous?.name || 'Project'} · ${changes.status}`, recordId,{clientId:previous?.clientId,projectId:recordId,recipientRole:'CLIENT',route:`projects/${recordId}`})
       if (changes.status === 'Completed' && previous.dealId) {
         update('deals', (records) => records.map((deal) => deal.id === previous.dealId ? { ...deal, status: 'Completed', updatedAt: new Date().toISOString().slice(0, 10) } : deal))
       }
@@ -89,14 +105,14 @@ export function DataProvider({ children }) {
       addActivity('revision', `Revision ${changes.status.toLowerCase()}`, previous?.description || 'Project revision', previous?.projectId || previous?.clientId)
     }
     if (collection === 'projectRequests' && previous?.status !== changes.status && changes.status) {
-      addActivity('request', `Project request ${changes.status.toLowerCase()}`, previous?.projectName || 'Project request', recordId)
+      addActivity('request', `Project request ${changes.status.toLowerCase()}`, previous?.projectName || 'Project request', recordId,{clientId:previous?.clientId,recipientRole:'CLIENT',route:'requests'})
     }
   }
-  const addActivity = (type, title, detail, recordId) => {
+  const addActivity = (type, title, detail, recordId, scope = {}) => {
     const timestamp = new Date().toISOString()
-    update('activities', (records) => [{ id: id('a'), type, title, detail, timestamp, time: 'Just now', recordId }, ...records])
-    if (['client', 'deal', 'payment', 'project', 'revision', 'approval', 'file', 'invoice', 'request'].includes(type)) {
-      update('notifications', (records) => [{ id: id('n'), type, title, detail, timestamp, time: 'Just now', recordId, read: false }, ...records])
+    update('activities', (records) => [{ id: id('a'), type, title, detail, timestamp, time: 'Just now', recordId, ...scope }, ...records])
+    if (['client', 'deal', 'payment', 'project', 'revision', 'approval', 'file', 'invoice', 'request', 'message', 'deliverable'].includes(type)) {
+      update('notifications', (records) => [{ id: id('n'), type, title, detail, timestamp, time: 'Just now', recordId, read: false, readBy: [], ...scope }, ...records])
     }
   }
   const actions = {
@@ -106,15 +122,15 @@ export function DataProvider({ children }) {
     addCommunication: (item) => { const record = add('communications', item, 'com'); addActivity('communication', 'Client communication logged', `${record.channel || 'Contact'} · ${record.summary}`, record.clientId); return record },
     addProjectRequest: (item) => {
       if (!data.clients.some((client) => client.id === item.clientId)) throw new Error('A valid client profile is required for this request.')
-      if (!data.services.some((service) => service.id === item.serviceId)) throw new Error('Choose an available MAGAF service.')
+      if (item.status!=='Draft'&&!data.services.some((service) => service.id === item.serviceId)) throw new Error('Choose an available MAGAF service.')
       const record=add('projectRequests',{status:'Submitted',priority:'Medium',submittedAt:new Date().toISOString().slice(0,10),...item},'req')
-      addActivity('request','New client project request',record.projectName,record.id)
+      addActivity('request','New client project request',record.projectName,record.id,{clientId:record.clientId,recipientRole:'TEAM',route:`requests`})
       return record
     },
     reviewProjectRequest: (requestId,status,teamNotes) => {
       const request=data.projectRequests.find((item)=>item.id===requestId)
       if(!request)throw new Error('Project request not found.')
-      if(!['Under Review','Need More Information','Accepted','Rejected','Cancelled'].includes(status))throw new Error('Unsupported project request status.')
+      if(!['Draft','Under Review','Need More Information','Accepted','Rejected','Cancelled'].includes(status))throw new Error('Unsupported project request status.')
       patch('projectRequests',requestId,{status,...(teamNotes!==undefined?(status==='Need More Information'?{informationRequested:teamNotes}:{teamNotes}):{})})
       return request
     },
@@ -125,10 +141,11 @@ export function DataProvider({ children }) {
       const amount=Number(agreedAmount??request.proposedPrice??request.estimatedBudget??0)
       if(!Number.isFinite(amount)||amount<0)throw new Error('Enter a valid agreed amount.')
       const deal=add('deals',{clientId:request.clientId,serviceId:request.serviceId,title:request.projectName,description:request.description,quotedAmount:Number(request.estimatedBudget||amount),agreedAmount:amount,paidAmount:0,paymentStatus:'Not Paid',status:'Accepted',createdFromRequestId:request.id,notes:request.teamNotes||''},'deal')
-      const project=actions.addProject({clientId:request.clientId,serviceId:request.serviceId,dealId:deal.id,sourceRequestId:request.id,requestSnapshot:{...request},name:request.projectName,description:request.description,problemStatement:request.problemStatement,expectedOutcome:request.expectedOutcome,requirements:request.requirements,priority:request.priority,deadline:request.desiredDeadline,agreedAmount:amount,paidAmount:0,status:'Planning',notes:request.teamNotes||''})
+      const project=actions.addProject({clientId:request.clientId,serviceId:request.serviceId,dealId:deal.id,sourceRequestId:request.id,requestId:request.id,requestSnapshot:{...request},name:request.projectName,description:request.description,problemStatement:request.problemStatement,businessGoal:request.businessGoal,expectedOutcome:request.expectedOutcome,expectedDeliverables:request.expectedDeliverables,requirements:request.requirements,technologyInformation:request.technologyInformation,referenceLinks:request.referenceLinks,clientNotes:request.clientNotes,priority:request.priority,deadline:request.desiredDeadline,agreedAmount:amount,paidAmount:0,status:'Planning',notes:request.teamNotes||''})
       patch('deals',deal.id,{projectId:project.id})
       patch('projectRequests',request.id,{status:'Converted to Project',convertedDealId:deal.id,convertedProjectId:project.id})
       update('files',(records)=>records.map((file)=>file.projectRequestId===request.id?{...file,projectId:project.id}:file))
+      addActivity('project','Request converted to project',project.name,project.id,{clientId:request.clientId,projectId:project.id,route:`projects/${project.id}`})
       return project
     },
     addStudent: (item) => {
@@ -143,8 +160,56 @@ export function DataProvider({ children }) {
       const record=add('projects',{status:'Planning',priority:'Medium',progress:0,...item,agreedAmount,paidAmount,paymentStatus:paidAmount>=agreedAmount&&agreedAmount>0?'Paid':paidAmount?'Partially Paid':'Pending'},'p')
       if(deal)patch('deals',deal.id,{clientId:record.clientId||deal.clientId,projectId:record.id,agreedAmount:record.agreedAmount,paidAmount:record.paidAmount,paymentStatus:record.paidAmount>=record.agreedAmount?'Paid':record.paidAmount?'Partially Paid':'Unpaid'})
       update('milestones',(records)=>[...records,{id:id('m'),projectId:record.id,name:'Requirements confirmed',status:'Upcoming',completionPercentage:0,dueDate:record.startDate,clientVisible:true},{id:id('m'),projectId:record.id,name:'First client review',status:'Upcoming',completionPercentage:0,dueDate:record.deadline,clientVisible:true},{id:id('m'),projectId:record.id,name:'Final delivery',status:'Upcoming',completionPercentage:0,dueDate:record.deadline,clientVisible:true}])
-      addActivity('project','Project created',record.name,record.id)
+      addActivity('project','Project created',record.name,record.id,{clientId:record.clientId,projectId:record.id,route:`projects/${record.id}`})
       return record
+    },
+    ensureConversation: (clientId, projectId, projectRequestId) => {
+      if (!data.clients.some((client) => client.id === clientId)) throw new Error('A valid client profile is required for a conversation.')
+      if (projectId && !data.projects.some((project) => project.id === projectId && project.clientId === clientId)) throw new Error('The project is not connected to this client.')
+      if (projectRequestId && !data.projectRequests.some((request) => request.id === projectRequestId && request.clientId === clientId)) throw new Error('The request is not connected to this client.')
+      const existing=data.conversations.find((conversation)=>conversation.clientId===clientId&&(conversation.projectId||'')===(projectId||'')&&(conversation.projectRequestId||'')===(projectRequestId||''))
+      return existing||add('conversations',{clientId,projectId:projectId||null,projectRequestId:projectRequestId||null,participantIds:[clientId,...data.users.map((person)=>person.id)],createdBy:user?.id||'system',lastMessageAt:null},'conv')
+    },
+    sendMessage: ({clientId,projectId,conversationId,text,attachments=[]}) => {
+      if (!String(text||'').trim()&&!attachments.length) throw new Error('Write a message or attach a file before sending.')
+      const conversation=conversationId?data.conversations.find((item)=>item.id===conversationId):actions.ensureConversation(clientId,projectId)
+      if(!conversation)throw new Error('Conversation not found.')
+      if(user?.kind==='CLIENT'&&conversation.clientId!==user.clientId)throw new Error('You do not have access to this conversation.')
+      const timestamp=new Date().toISOString()
+      const senderRole=user?.kind==='CLIENT'?'CLIENT':'TEAM'
+      const message=add('messages',{conversationId:conversation.id,clientId:conversation.clientId,projectId:conversation.projectId||null,projectRequestId:conversation.projectRequestId||null,senderId:user?.id||'system',senderName:user?.name||'MAGAF Team',senderRole,recipientId:senderRole==='CLIENT'?'TEAM':conversation.clientId,recipientIds:(conversation.participantIds||[]).filter((participant)=>participant!==(user?.id||'system')),text:String(text||'').trim(),attachments,status:'Sent',createdAt:timestamp,readReceipts:[]},'msg')
+      update('conversations',(records)=>records.map((item)=>item.id===conversation.id?{...item,lastMessageAt:timestamp,lastMessage:message.text||attachments[0]?.name||'Attachment shared',lastSenderId:message.senderId}:item))
+      addActivity('message',message.senderRole==='CLIENT'?'New client message':'New MAGAF message',message.text||'Attachment shared',message.id,{clientId:conversation.clientId,projectId:conversation.projectId,conversationId:conversation.id,recipientRole:message.senderRole==='CLIENT'?'TEAM':'CLIENT',route:`messages/${conversation.id}`})
+      return message
+    },
+    markConversationRead: (conversationId) => {
+      const conversation=data.conversations.find((item)=>item.id===conversationId)
+      if(!conversation)return
+      if(user?.kind==='CLIENT'&&conversation.clientId!==user.clientId)throw new Error('You do not have access to this conversation.')
+      const reader={userId:user?.id||'system',name:user?.name||'MAGAF Team',role:user?.kind==='CLIENT'?'CLIENT':'TEAM'}
+      const unread=data.messages.filter((message)=>message.conversationId===conversationId&&message.senderRole!==reader.role&&!(message.readReceipts||[]).some((receipt)=>receipt.userId===reader.userId))
+      if(!unread.length)return
+      update('messages',(records)=>records.map((message)=>{
+        if(message.conversationId!==conversationId||message.senderRole===reader.role)return message
+        const receipts=message.readReceipts||[]
+        if(receipts.some((receipt)=>receipt.userId===reader.userId))return message
+        return {...message,readReceipts:[...receipts,{...reader,readAt:new Date().toISOString()}],status:'Read'}
+      }))
+      if(unread.length)update('messageReads',(records)=>[...records,...unread.map((message)=>({id:id('read'),messageId:message.id,conversationId,clientId:conversation.clientId,projectId:conversation.projectId||null,userId:reader.userId,userName:reader.name,role:reader.role,readAt:new Date().toISOString()}))])
+    },
+    addRequestInformation: ({requestId,text,files=[]}) => {
+      const request=data.projectRequests.find((item)=>item.id===requestId)
+      if(!request)throw new Error('Project request not found.')
+      if(user?.kind==='CLIENT'&&request.clientId!==user.clientId)throw new Error('You do not have access to this request.')
+      patch('projectRequests',requestId,{clientAdditionalInfo:[...(request.clientAdditionalInfo||[]),{id:id('info'),text:String(text||'').trim(),createdAt:new Date().toISOString(),createdBy:user?.id||'unknown'}]})
+      files.forEach((file)=>actions.addFile({...file,clientId:request.clientId,projectRequestId:requestId,uploadedBy:user?.kind==='CLIENT'?'Client':'MAGAF Team',visibility:'Client',uploadedAt:new Date().toISOString().slice(0,10)}))
+      addActivity('request','Additional request information shared',request.projectName,requestId,{clientId:request.clientId,recipientRole:'TEAM',route:'requests'})
+    },
+    updateClientProfile: (clientId,changes) => {
+      if(user?.kind==='CLIENT'&&user.clientId!==clientId)throw new Error('You cannot edit another client profile.')
+      const allowed=['contact','email','phone','address','city','state','country','website']
+      const safeChanges=Object.fromEntries(Object.entries(changes).filter(([key])=>allowed.includes(key)))
+      patch('clients',clientId,safeChanges)
     },
     addPayment: (item) => {
       const deal = data.deals.find((record) => record.id === item.dealId)
@@ -184,7 +249,7 @@ export function DataProvider({ children }) {
         const invoiceStatus = invoicePaid >= Number(invoice.amount || 0) ? 'Fully Paid' : invoicePaid > 0 ? 'Partially Paid' : 'Payment Pending'
         patch('invoices', invoice.id, { paymentStatus: invoiceStatus })
       })
-      addActivity('payment', `${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(payment.amount)} ${payment.type==='Refund'?'refund recorded':'payment received'}`, student?.name || data.clients.find((client) => client.id === payment.clientId)?.name || 'Client', student?.id || payment.clientId)
+      addActivity('payment', `${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(payment.amount)} ${payment.type==='Refund'?'refund recorded':'payment received'}`, student?.name || data.clients.find((client) => client.id === payment.clientId)?.name || 'Client', payment.projectId||student?.id||payment.clientId,{clientId:payment.clientId,projectId:payment.projectId,recipientRole:'CLIENT',route:'payments'})
       return payment
     },
     addTask: (item) => { const record = add('tasks', { status: 'Todo', priority: 'Medium', ...item }, 't'); addActivity('task', 'Task created', record.title, record.id); return record },
@@ -197,6 +262,13 @@ export function DataProvider({ children }) {
     },
     addFile: (item) => {
       const record=add('files',{category:'Other',visibility:'Internal',uploadedBy:'MAGAF Team',uploadedAt:new Date().toISOString().slice(0,10),...item},'file')
+      record.attachmentId=record.attachmentId||record.id
+      record.fileName=record.fileName||record.name
+      record.fileType=record.fileType||record.type
+      record.fileSize=record.fileSize??record.size
+      record.fileUrl=record.fileUrl||record.fileData||record.url||''
+      record.requestId=record.requestId||record.projectRequestId
+      update('files',(records)=>records.map((file)=>file.id===record.id?record:file))
       addActivity('file',item.uploadedBy==='Client'?'Client uploaded a file':'File added',record.name,record.projectId||record.clientId)
       return record
     },
@@ -262,8 +334,8 @@ export function DataProvider({ children }) {
       addActivity('milestone','Project milestone completed',milestone.name,milestone.projectId)
     },
     addGeneric: (collection, item) => collection==='students'?actions.addStudent(item):collection==='mentoringSessions'?actions.addMentoringSession(item):collection==='services'?add('services',enrichServices([{...item,id:item.id||id('svc')}])[0],'svc'):add(collection, item),
-    markNotificationRead: (notificationId) => patch('notifications', notificationId, { read: true }),
-    markAllNotificationsRead: () => update('notifications', (records) => records.map((record) => ({ ...record, read: true }))),
+    markNotificationRead: (notificationId) => update('notifications',(records)=>records.map((record)=>record.id===notificationId?{...record,readBy:[...(record.readBy||[]).filter((receipt)=>receipt.userId!==user?.id),{userId:user?.id||'system',role:user?.kind==='CLIENT'?'CLIENT':'TEAM',readAt:new Date().toISOString()}],...(user?.kind==='CLIENT'?{}:{read:true})}:record)),
+    markAllNotificationsRead: () => update('notifications', (records) => records.map((record) => ({ ...record, readBy:[...(record.readBy||[]).filter((receipt)=>receipt.userId!==user?.id),{userId:user?.id||'system',role:user?.kind==='CLIENT'?'CLIENT':'TEAM',readAt:new Date().toISOString()}],...(user?.kind==='CLIENT'?{}:{read:true}) }))),
     removeRecord: (collection, recordId) => {
       const record = data[collection]?.find((item) => item.id === recordId)
       if (!record) return

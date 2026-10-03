@@ -7,6 +7,7 @@ import RecordsPage from './components/RecordsPage'
 import RecordDetail from './components/RecordDetail'
 import RecordModal from './components/RecordModal'
 import ClientPortal from './components/ClientPortal'
+import TeamMessages from './components/TeamMessages'
 import Icon from './components/Icon'
 import './App.css'
 
@@ -30,6 +31,7 @@ function Workspace() {
   const [page,id]=route.split('/')
   let content
   if(page==='dashboard'||!page)content=<Dashboard navigate={navigate} quickAdd={quickAdd}/>
+  else if(page==='messages')content=<TeamMessages key={id||'all'} conversationId={id}/>
   else if(id)content=<RecordDetail type={page} id={id} navigate={navigate} quickAdd={quickAdd}/>
   else if(page==='settings')content=<Settings navigate={navigate}/>
   else content=<RecordsPage page={page} navigate={navigate} quickAdd={quickAdd}/>

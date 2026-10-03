@@ -172,6 +172,11 @@ export const files = assets.map((asset)=>({
   clientId:asset.clientId, projectId:asset.projectId, uploadedBy:'MAGAF Team', uploadedAt:'2026-10-02',
   description:asset.notes, visibility:['Delivered','Client Review'].includes(asset.status)?'Client':'Internal', url:asset.url, prompt:asset.prompt, status:asset.status,
 }))
+files.push(
+  {id:'file-audio-demo',name:'Project brief voice note.webm',type:'Audio',category:'Requirement',clientId:'cl1',projectRequestId:'req1',uploadedBy:'Client',uploadedAt:'2026-10-02',visibility:'Client',url:'https://example.com/demo-voice-note.webm',description:'Example voice requirement attachment'},
+  {id:'file-video-demo',name:'Reference walkthrough.mp4',type:'Video',category:'Reference',clientId:'cl1',projectId:'p1',uploadedBy:'Client',uploadedAt:'2026-10-02',visibility:'Client',url:'https://example.com/reference-walkthrough.mp4',description:'Example project video reference'},
+  {id:'file-drive-demo',name:'Shared design references',type:'Link',category:'Reference',clientId:'cl2',projectId:'p2',uploadedBy:'Client',uploadedAt:'2026-10-01',visibility:'Client',url:'https://drive.google.com/drive/folders/example',description:'Example shared folder'},
+)
 export const milestones = projects.flatMap((project,index)=>[
   { id:`m${index+1}a`,projectId:project.id,name:'Requirements confirmed',status:'Completed',dueDate:project.startDate,completedAt:project.startDate,clientVisible:true },
   { id:`m${index+1}b`,projectId:project.id,name:'First review',status:project.status==='Completed'?'Completed':index%2?'In Progress':'Upcoming',dueDate:project.deadline,clientVisible:true },
@@ -184,6 +189,18 @@ export const communications = [
   { id:'com1',clientId:'cl2',projectId:'p2',date:'2026-10-02',channel:'WhatsApp',person:'Dr. Vivek Rao',summary:'Shared campaign direction and clinic branding references.',followUpDate:'2026-10-05',notes:'Client prefers warm, family-focused language.' },
   { id:'com2',clientId:'cl7',projectId:'p7',date:'2026-10-01',channel:'Phone',person:'Srinivas Rao',summary:'Confirmed initial product categories for the online store.',followUpDate:'2026-10-06',notes:'Internal: confirm catalog spreadsheet before importing.' },
 ]
+export const conversations = [
+  {id:'conv-school-project',clientId:'cl1',projectId:'p1',participantIds:['cl1','u1','u2','u3'],createdAt:'2026-09-22T09:00:00.000Z',lastMessageAt:'2026-10-03T08:45:00.000Z',lastMessage:'We have uploaded the updated school logo.',lastSenderId:'cl1'},
+  {id:'conv-clinic-campaign',clientId:'cl2',projectId:'p2',participantIds:['cl2','u1','u2','u3'],createdAt:'2026-09-28T09:00:00.000Z',lastMessageAt:'2026-10-02T13:15:00.000Z',lastMessage:'The campaign preview is ready for your review.',lastSenderId:'u2'},
+  {id:'conv-school-general',clientId:'cl1',projectId:null,participantIds:['cl1','u1','u2','u3'],createdAt:'2026-09-20T09:00:00.000Z',lastMessageAt:'2026-10-01T10:15:00.000Z',lastMessage:'Thank you, we will coordinate the next steps.',lastSenderId:'u1'},
+]
+export const messages = [
+  {id:'msg-school-1',conversationId:'conv-school-project',clientId:'cl1',projectId:'p1',senderId:'u1',senderName:'Chandu',senderRole:'TEAM',text:'The admissions portal structure is ready for your review.',status:'Read',createdAt:'2026-10-02T09:30:00.000Z',readReceipts:[{userId:'portal:cl1',name:'Anusha Reddy',role:'CLIENT',readAt:'2026-10-02T10:00:00.000Z'}]},
+  {id:'msg-school-2',conversationId:'conv-school-project',clientId:'cl1',projectId:'p1',senderId:'cl1',senderName:'Anusha Reddy',senderRole:'CLIENT',text:'We have uploaded the updated school logo.',status:'Read',createdAt:'2026-10-03T08:45:00.000Z',attachments:[{id:'as6',name:'Sunrise admissions portal launch guide',type:'Link',url:'https://example.com/sunrise-launch-guide'}],readReceipts:[{userId:'u1',name:'Chandu',role:'TEAM',readAt:'2026-10-03T09:10:00.000Z'},{userId:'u3',name:'Ramesh',role:'TEAM',readAt:'2026-10-03T09:25:00.000Z'}]},
+  {id:'msg-clinic-1',conversationId:'conv-clinic-campaign',clientId:'cl2',projectId:'p2',senderId:'cl2',senderName:'Dr. Vivek Rao',senderRole:'CLIENT',text:'Could you share the latest campaign preview when it is ready?',status:'Read',createdAt:'2026-10-02T11:20:00.000Z',readReceipts:[{userId:'u2',name:'Dileep',role:'TEAM',readAt:'2026-10-02T11:40:00.000Z'}]},
+  {id:'msg-clinic-2',conversationId:'conv-clinic-campaign',clientId:'cl2',projectId:'p2',senderId:'u2',senderName:'Dileep',senderRole:'TEAM',text:'The campaign preview is ready for your review.',status:'Sent',createdAt:'2026-10-02T13:15:00.000Z',readReceipts:[]},
+  {id:'msg-school-general-1',conversationId:'conv-school-general',clientId:'cl1',senderId:'u1',senderName:'Chandu',senderRole:'TEAM',text:'Thank you, we will coordinate the next steps.',status:'Read',createdAt:'2026-10-01T10:15:00.000Z',readReceipts:[{userId:'portal:cl1',name:'Anusha Reddy',role:'CLIENT',readAt:'2026-10-01T10:20:00.000Z'}]},
+]
 export const projectRequests = [
   { id:'req1', clientId:'cl7', serviceId:'software', projectName:'Handloom wholesale catalogue', description:'Create a catalogue and enquiry workflow for wholesale buyers.', problemStatement:'Wholesale buyers currently request product details manually.', expectedOutcome:'A searchable online catalogue with enquiry capture.', requirements:'Mobile-friendly catalogue, product categories, WhatsApp enquiry links.', estimatedBudget:35000, proposedPrice:0, desiredDeadline:'2026-11-20', priority:'High', submittedAt:'2026-10-02', preferredCommunication:'WhatsApp', status:'Submitted', clientNotes:'We can share product photos and the current catalogue.', teamNotes:'' },
   { id:'req2', clientId:'cl3', serviceId:'content', projectName:'Holiday season content package', description:'Plan and create a short seasonal content campaign for the cafe.', problemStatement:'Need a consistent plan for the holiday menu launch.', expectedOutcome:'A month of ready-to-publish social content.', requirements:'Instagram posts, captions and 3 short-form videos.', estimatedBudget:12000, proposedPrice:14000, desiredDeadline:'2026-11-05', priority:'Medium', submittedAt:'2026-10-01', preferredCommunication:'Email', status:'Under Review', clientNotes:'Please include the new dessert menu.', teamNotes:'Review scope and confirm video quantity.' },
@@ -192,8 +209,10 @@ export const mentoringSessions = [
   { id:'ms1', studentId:'st1', topic:'React component architecture', date:'2026-10-05', durationMinutes:60, status:'Scheduled', mentor:'Chandu', notes:'' },
   { id:'ms2', studentId:'st2', topic:'Python data structures', date:'2026-10-06', durationMinutes:60, status:'Scheduled', mentor:'Ramesh', notes:'' },
 ]
-export const initialData = { schemaVersion:2, services, clients, leads, deals, projects, payments:paymentsWithMentoring, invoices, tasks, targets, activities, users, assets, files, content, products, students, mentoringSessions, projectRequests, milestones, revisions, communications, notifications: [
+export const initialData = { schemaVersion:3, services, clients, leads, deals, projects, payments:paymentsWithMentoring, invoices, tasks, targets, activities, users, assets, files, content, products, students, mentoringSessions, projectRequests, milestones, revisions, communications, conversations, messages, messageReads:[], notifications: [
   {id:'n1',type:'follow-up',title:'Follow-up due today',detail:'Lotus Dental Care proposal',time:'Today'},
   {id:'n2',type:'deadline',title:'Project deadline approaching',detail:'Clinic launch campaign · Oct 5',time:'Today'},
   {id:'n3',type:'payment',title:'Partial payment received',detail:'GreenLeaf Family Clinic · ₹7,000',time:'Today'},
+  {id:'n4',type:'message',title:'New project message',detail:'Sunrise Public School · School website & admissions portal',time:'Today',timestamp:'2026-10-03T08:45:00.000Z',clientId:'cl1',projectId:'p1',conversationId:'conv-school-project',recipientRole:'TEAM',route:'messages/conv-school-project',read:false,readBy:[]},
+  {id:'n5',type:'request',title:'Project request needs review',detail:'Handloom wholesale catalogue',time:'Yesterday',timestamp:'2026-10-02T10:00:00.000Z',clientId:'cl7',recordId:'req1',recipientRole:'TEAM',route:'requests',read:false,readBy:[]},
 ], companySettings:{ name:'MAGAF Technologies', currency:'INR', timezone:'Asia/Kolkata' } }
