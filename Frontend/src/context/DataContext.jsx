@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { initialData } from '../data/mockData'
 import { dealPaid, invoicePaid, invoiceStatus, paymentValue, projectPaid } from '../utils/calculations'
+import { enrichServices } from '../services/serviceRegistry'
 
 const DataContext = createContext(null)
 const STORAGE_KEY = 'magaf-os-data-v1'
@@ -10,11 +11,24 @@ const readData = () => {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (!saved) return initialData
     const persisted = JSON.parse(saved)
+    const shouldMigrate=Number(persisted.schemaVersion||0)<initialData.schemaVersion
+    const savedStudents=persisted.students||initialData.students
+    const migratedStudents=shouldMigrate?[
+      ...initialData.students.map((student)=>({...student,...savedStudents.find((item)=>item.id===student.id)})),
+      ...savedStudents.filter((student)=>!initialData.students.some((seed)=>seed.id===student.id)),
+    ]:savedStudents
     return {
       ...initialData,
       ...persisted,
-      services: persisted.services ? [...persisted.services, ...initialData.services.filter((service) => !persisted.services.some((item) => item.id === service.id))] : initialData.services,
+      schemaVersion:initialData.schemaVersion,
+      services: enrichServices(persisted.services ? [...persisted.services, ...initialData.services.filter((service) => !persisted.services.some((item) => item.id === service.id))] : initialData.services),
       invoices: persisted.invoices || initialData.invoices,
+      targets:{...initialData.targets,...persisted.targets},
+      students:migratedStudents,
+      payments:shouldMigrate?[
+        ...(persisted.payments||initialData.payments),
+        ...initialData.payments.filter((payment)=>payment.studentId&&!(persisted.payments||[]).some((item)=>item.id===payment.id)),
+      ]:(persisted.payments||initialData.payments),
     }
   } catch (error) {
     console.error('Unable to load saved demo data.', error)
@@ -38,7 +52,7 @@ export function DataProvider({ children }) {
   const patch = (collection, recordId, changes) => {
     const previous = data[collection]?.find((record) => record.id === recordId)
     const today = new Date().toISOString().slice(0, 10)
-    const progressByStatus = { Planning: 5, 'Requirement Gathering': 12, Design: 25, Development: 48, 'In Progress': 48, Review: 65, 'Client Review': 76, Revision: 82, 'Revision Requested': 80, Approved: 88, Deployment: 94, Delivered: 100, Completed: 100, 'On Hold': previous?.progress || 0, Paused: previous?.progress || 0 }
+    const progressByStatus = { Draft:0,Planning: 5,Proposal:5,'Awaiting Client':8,'Deal Accepted':10,'Payment Pending':10,'Requirement Gathering':12,Design:25,Development:48,'In Progress':48,Review:65,'Client Review':76,Revision:82,'Revision Requested':80,Approved:88,'Ready for Delivery':95,Deployment:94,Delivered:100,Completed:100,'On Hold':previous?.progress||0,Paused:previous?.progress||0 }
     const projectChanges = collection === 'projects' && changes.status && changes.status !== previous?.status
       ? { progress: progressByStatus[changes.status] ?? previous?.progress ?? 0, ...(changes.status === 'Completed' ? { completedAt: today } : {}) }
       : {}
@@ -64,15 +78,24 @@ export function DataProvider({ children }) {
       update('tasks', (records) => records.map((record) => record.id === recordId && changes.status === 'Completed' ? { ...record, completedAt: today } : record))
       addActivity('task', changes.status === 'Completed' ? 'Task completed' : 'Task status updated', `${previous?.title || 'Task'} · ${changes.status}`, recordId)
     }
+    if (collection === 'mentoringSessions' && previous?.status !== changes.status && changes.status) {
+      addActivity('session',`Mentoring session ${changes.status.toLowerCase()}`,previous?.topic||'Session',previous?.studentId)
+      if(changes.status==='Completed'&&previous?.studentId){
+        update('students',(records)=>records.map((student)=>student.id===previous.studentId?{...student,sessionsCompleted:Number(student.sessionsCompleted||0)+1,sessionsRemaining:Math.max(0,Number(student.sessionsRemaining||0)-1),updatedAt:today}:student))
+      }
+    }
     if (collection === 'revisions' && previous?.status !== changes.status && changes.status) {
       if (changes.status === 'Completed') update('revisions', (records) => records.map((record) => record.id === recordId ? { ...record, completedAt: today } : record))
       addActivity('revision', `Revision ${changes.status.toLowerCase()}`, previous?.description || 'Project revision', previous?.projectId || previous?.clientId)
+    }
+    if (collection === 'projectRequests' && previous?.status !== changes.status && changes.status) {
+      addActivity('request', `Project request ${changes.status.toLowerCase()}`, previous?.projectName || 'Project request', recordId)
     }
   }
   const addActivity = (type, title, detail, recordId) => {
     const timestamp = new Date().toISOString()
     update('activities', (records) => [{ id: id('a'), type, title, detail, timestamp, time: 'Just now', recordId }, ...records])
-    if (['client', 'deal', 'payment', 'project', 'revision', 'approval', 'file', 'invoice'].includes(type)) {
+    if (['client', 'deal', 'payment', 'project', 'revision', 'approval', 'file', 'invoice', 'request'].includes(type)) {
       update('notifications', (records) => [{ id: id('n'), type, title, detail, timestamp, time: 'Just now', recordId, read: false }, ...records])
     }
   }
@@ -81,11 +104,43 @@ export function DataProvider({ children }) {
     addClient: (item) => { const record = add('clients', { status: 'Active', ...item }, 'cl'); addActivity('client', 'New client added', item.name, record.id); return record },
     addInvoice: (item) => { const record = add('invoices', { paymentStatus: 'Payment Pending', ...item }, 'inv'); addActivity('invoice', 'Invoice record created', record.invoiceNumber || record.id, record.clientId); return record },
     addCommunication: (item) => { const record = add('communications', item, 'com'); addActivity('communication', 'Client communication logged', `${record.channel || 'Contact'} · ${record.summary}`, record.clientId); return record },
+    addProjectRequest: (item) => {
+      if (!data.clients.some((client) => client.id === item.clientId)) throw new Error('A valid client profile is required for this request.')
+      if (!data.services.some((service) => service.id === item.serviceId)) throw new Error('Choose an available MAGAF service.')
+      const record=add('projectRequests',{status:'Submitted',priority:'Medium',submittedAt:new Date().toISOString().slice(0,10),...item},'req')
+      addActivity('request','New client project request',record.projectName,record.id)
+      return record
+    },
+    reviewProjectRequest: (requestId,status,teamNotes) => {
+      const request=data.projectRequests.find((item)=>item.id===requestId)
+      if(!request)throw new Error('Project request not found.')
+      if(!['Under Review','Need More Information','Accepted','Rejected','Cancelled'].includes(status))throw new Error('Unsupported project request status.')
+      patch('projectRequests',requestId,{status,...(teamNotes!==undefined?(status==='Need More Information'?{informationRequested:teamNotes}:{teamNotes}):{})})
+      return request
+    },
+    convertProjectRequest: (requestId,agreedAmount) => {
+      const request=data.projectRequests.find((item)=>item.id===requestId)
+      if(!request)throw new Error('Project request not found.')
+      if(!['Accepted','Under Review','Submitted'].includes(request.status))throw new Error('Only an active request can be converted.')
+      const amount=Number(agreedAmount??request.proposedPrice??request.estimatedBudget??0)
+      if(!Number.isFinite(amount)||amount<0)throw new Error('Enter a valid agreed amount.')
+      const deal=add('deals',{clientId:request.clientId,serviceId:request.serviceId,title:request.projectName,description:request.description,quotedAmount:Number(request.estimatedBudget||amount),agreedAmount:amount,paidAmount:0,paymentStatus:'Not Paid',status:'Accepted',createdFromRequestId:request.id,notes:request.teamNotes||''},'deal')
+      const project=actions.addProject({clientId:request.clientId,serviceId:request.serviceId,dealId:deal.id,sourceRequestId:request.id,requestSnapshot:{...request},name:request.projectName,description:request.description,problemStatement:request.problemStatement,expectedOutcome:request.expectedOutcome,requirements:request.requirements,priority:request.priority,deadline:request.desiredDeadline,agreedAmount:amount,paidAmount:0,status:'Planning',notes:request.teamNotes||''})
+      patch('deals',deal.id,{projectId:project.id})
+      patch('projectRequests',request.id,{status:'Converted to Project',convertedDealId:deal.id,convertedProjectId:project.id})
+      update('files',(records)=>records.map((file)=>file.projectRequestId===request.id?{...file,projectId:project.id}:file))
+      return project
+    },
+    addStudent: (item) => {
+      const record=add('students',{serviceId:'mentoring',status:'Active',paidAmount:0,sessionsCompleted:0,sessionsRemaining:0,...item},'st')
+      addActivity('student','Mentoring student enrolled',record.name,record.id)
+      return record
+    },
     addProject: (item) => {
       const deal=data.deals.find((candidate)=>candidate.id===item.dealId)
       const agreedAmount=Number(item.agreedAmount??deal?.agreedAmount??deal?.quotedAmount??0)
       const paidAmount=Math.min(agreedAmount,Number(item.paidAmount??deal?.paidAmount??0))
-      const record=add('projects',{status:'Planning',priority:'Medium',progress:0,...item,agreedAmount,paidAmount},'p')
+      const record=add('projects',{status:'Planning',priority:'Medium',progress:0,...item,agreedAmount,paidAmount,paymentStatus:paidAmount>=agreedAmount&&agreedAmount>0?'Paid':paidAmount?'Partially Paid':'Pending'},'p')
       if(deal)patch('deals',deal.id,{clientId:record.clientId||deal.clientId,projectId:record.id,agreedAmount:record.agreedAmount,paidAmount:record.paidAmount,paymentStatus:record.paidAmount>=record.agreedAmount?'Paid':record.paidAmount?'Partially Paid':'Unpaid'})
       update('milestones',(records)=>[...records,{id:id('m'),projectId:record.id,name:'Requirements confirmed',status:'Upcoming',completionPercentage:0,dueDate:record.startDate,clientVisible:true},{id:id('m'),projectId:record.id,name:'First client review',status:'Upcoming',completionPercentage:0,dueDate:record.deadline,clientVisible:true},{id:id('m'),projectId:record.id,name:'Final delivery',status:'Upcoming',completionPercentage:0,dueDate:record.deadline,clientVisible:true}])
       addActivity('project','Project created',record.name,record.id)
@@ -96,9 +151,12 @@ export function DataProvider({ children }) {
       const project = data.projects.find((record) => record.id === item.projectId) || data.projects.find((record) => record.id === deal?.projectId)
       const linkedDeal = deal || data.deals.find((record) => record.id === project?.dealId)
       const invoice = data.invoices.find((record) => record.id === item.invoiceId || record.invoiceNumber === item.invoiceId)
+      const student = data.students.find((record) => record.id === item.studentId)
       const amount=Number(item.amount)
-      const paid=invoice ? invoicePaid(data, invoice) : project ? projectPaid(data, project) : linkedDeal ? dealPaid(data, linkedDeal) : 0
-      const value=Number(invoice?.amount ?? project?.agreedAmount ?? linkedDeal?.agreedAmount ?? linkedDeal?.quotedAmount ?? 0)
+      const studentPayments=data.payments.filter((payment)=>payment.studentId===student?.id).reduce((sum,payment)=>sum+paymentValue(payment),0)
+      const paid=invoice ? invoicePaid(data, invoice) : project ? projectPaid(data, project) : linkedDeal ? dealPaid(data, linkedDeal) : student ? (data.payments.some((payment)=>payment.studentId===student.id)?studentPayments:Number(student.paidAmount||0)) : 0
+      const value=Number(invoice?.amount ?? project?.agreedAmount ?? linkedDeal?.agreedAmount ?? linkedDeal?.quotedAmount ?? student?.agreedAmount ?? 0)
+      if(!invoice&&!project&&!linkedDeal&&!student)throw new Error('Link this payment to a project, deal, invoice, or mentoring student.')
       if(!Number.isFinite(amount)||amount<=0)throw new Error('Payment amount must be greater than zero.')
       if(item.type==='Refund'&&amount>paid)throw new Error(`Refund exceeds the amount paid of ₹${paid.toLocaleString('en-IN')}.`)
       if(item.type!=='Refund'&&amount>Math.max(0,value-paid))throw new Error(`Payment exceeds the remaining balance of ₹${Math.max(0,value-paid).toLocaleString('en-IN')}.`)
@@ -106,11 +164,15 @@ export function DataProvider({ children }) {
       const delta = paymentValue(payment)
       if (project) {
         const paidAmount = Math.min(Number(project.agreedAmount || 0), Math.max(0,Number(project.paidAmount || 0) + delta))
-        patch('projects', project.id, { paidAmount })
+        patch('projects', project.id, { paidAmount,paymentStatus:paidAmount>=Number(project.agreedAmount||0)?'Paid':paidAmount?'Partially Paid':'Pending' })
       }
       if (linkedDeal) {
         const paidAmount = Math.min(Number(linkedDeal.agreedAmount || linkedDeal.quotedAmount || 0), Math.max(0,Number(project?.paidAmount ?? linkedDeal.paidAmount ?? 0) + delta))
         patch('deals', linkedDeal.id, { paidAmount, paymentStatus:paidAmount>=Number(linkedDeal.agreedAmount||linkedDeal.quotedAmount||0)?'Paid':paidAmount?'Partially Paid':'Unpaid' })
+      }
+      if(student){
+        const studentPaidNow=Math.max(0,(data.payments.some((payment)=>payment.studentId===student.id)?studentPayments:Number(student.paidAmount||0))+delta)
+        patch('students',student.id,{paidAmount:Math.min(Number(student.agreedAmount||0),studentPaidNow),paymentStatus:studentPaidNow>=Number(student.agreedAmount||0)?'Paid':studentPaidNow?'Partially Paid':'Pending'})
       }
       data.invoices.filter((invoice) => invoice.id === payment.invoiceId || invoice.invoiceNumber === payment.invoiceId || (
         (invoice.projectId === project?.id || invoice.dealId === linkedDeal?.id)
@@ -122,10 +184,11 @@ export function DataProvider({ children }) {
         const invoiceStatus = invoicePaid >= Number(invoice.amount || 0) ? 'Fully Paid' : invoicePaid > 0 ? 'Partially Paid' : 'Payment Pending'
         patch('invoices', invoice.id, { paymentStatus: invoiceStatus })
       })
-      addActivity('payment', `${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(payment.amount)} ${payment.type==='Refund'?'refund recorded':'payment received'}`, data.clients.find((client) => client.id === payment.clientId)?.name || 'Client', payment.clientId)
+      addActivity('payment', `${new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(payment.amount)} ${payment.type==='Refund'?'refund recorded':'payment received'}`, student?.name || data.clients.find((client) => client.id === payment.clientId)?.name || 'Client', student?.id || payment.clientId)
       return payment
     },
     addTask: (item) => { const record = add('tasks', { status: 'Todo', priority: 'Medium', ...item }, 't'); addActivity('task', 'Task created', record.title, record.id); return record },
+    addMentoringSession: (item) => { const record=add('mentoringSessions',{status:'Scheduled',...item},'ms'); addActivity('session','Mentoring session scheduled',record.topic,record.studentId); return record },
     addAsset: (item) => {
       const record=add('assets',item,'asset')
       if(item.projectId||item.clientId) add('files',{...item,assetId:record.id,category:item.category||'Working',visibility:item.visibility||'Internal',uploadedBy:item.uploadedBy||'MAGAF Team',uploadedAt:new Date().toISOString().slice(0,10)},'file')
@@ -198,7 +261,7 @@ export function DataProvider({ children }) {
       patch('projects',milestone.projectId,{progress:Math.round(completed/projectMilestones.length*100)})
       addActivity('milestone','Project milestone completed',milestone.name,milestone.projectId)
     },
-    addGeneric: (collection, item) => add(collection, item),
+    addGeneric: (collection, item) => collection==='students'?actions.addStudent(item):collection==='mentoringSessions'?actions.addMentoringSession(item):collection==='services'?add('services',enrichServices([{...item,id:item.id||id('svc')}])[0],'svc'):add(collection, item),
     markNotificationRead: (notificationId) => patch('notifications', notificationId, { read: true }),
     markAllNotificationsRead: () => update('notifications', (records) => records.map((record) => ({ ...record, read: true }))),
     removeRecord: (collection, recordId) => {
@@ -206,11 +269,13 @@ export function DataProvider({ children }) {
       if (!record) return
       if (collection === 'clients') {
         const projectIds = data.projects.filter((project) => project.clientId === recordId).map((project) => project.id)
+        const requestIds=data.projectRequests.filter((request)=>request.clientId===recordId).map((request)=>request.id)
         update('projects', (records) => records.filter((project) => project.clientId !== recordId))
         update('payments', (records) => records.filter((payment) => payment.clientId !== recordId))
         update('tasks', (records) => records.filter((task) => task.clientId !== recordId && !projectIds.includes(task.projectId)))
         update('assets', (records) => records.filter((asset) => asset.clientId !== recordId && !projectIds.includes(asset.projectId)))
-        update('files',(records)=>records.filter((file)=>file.clientId!==recordId&&!projectIds.includes(file.projectId)))
+        update('files',(records)=>records.filter((file)=>file.clientId!==recordId&&!projectIds.includes(file.projectId)&&!requestIds.includes(file.projectRequestId)))
+        update('projectRequests',(records)=>records.filter((request)=>request.clientId!==recordId))
         update('deals',(records)=>records.filter((deal)=>deal.clientId!==recordId))
         update('revisions',(records)=>records.filter((revision)=>revision.clientId!==recordId))
         update('invoices',(records)=>records.filter((invoice)=>invoice.clientId!==recordId))
@@ -229,8 +294,9 @@ export function DataProvider({ children }) {
       }
       if (collection === 'payments' && record.projectId) {
         const paidAmount = Math.max(0,data.payments.filter((payment) => payment.projectId === record.projectId && payment.id !== recordId).reduce((sum, payment) => sum + paymentValue(payment), 0))
-        patch('projects', record.projectId, { paidAmount: Math.min(paidAmount, Number(data.projects.find((project) => project.id === record.projectId)?.agreedAmount || 0)) })
         const project=data.projects.find((item)=>item.id===record.projectId)
+        const projectPaidAmount=Math.min(paidAmount,Number(project?.agreedAmount||0))
+        patch('projects', record.projectId, { paidAmount:projectPaidAmount,paymentStatus:projectPaidAmount>=Number(project?.agreedAmount||0)&&Number(project?.agreedAmount||0)>0?'Paid':projectPaidAmount?'Partially Paid':'Pending' })
         const deal=data.deals.find((item)=>item.id===record.dealId)||data.deals.find((item)=>item.id===project?.dealId)
         if(deal)patch('deals',deal.id,{paidAmount:Math.min(paidAmount,Number(deal.agreedAmount||deal.quotedAmount||0)),paymentStatus:paidAmount>=Number(deal.agreedAmount||deal.quotedAmount||0)?'Paid':paidAmount?'Partially Paid':'Unpaid'})
       }
@@ -238,6 +304,15 @@ export function DataProvider({ children }) {
         const deal=data.deals.find((item)=>item.id===record.dealId)
         const paidAmount=Math.max(0,data.payments.filter((payment)=>payment.dealId===record.dealId&&payment.id!==recordId).reduce((sum,payment)=>sum+paymentValue(payment),0))
         if(deal)patch('deals',deal.id,{paidAmount:Math.min(paidAmount,Number(deal.agreedAmount||deal.quotedAmount||0)),paymentStatus:paidAmount>=Number(deal.agreedAmount||deal.quotedAmount||0)?'Paid':paidAmount?'Partially Paid':'Unpaid'})
+      }
+      if(collection==='payments'&&record.studentId){
+        const student=data.students.find((item)=>item.id===record.studentId)
+        const paidAmount=Math.max(0,data.payments.filter((payment)=>payment.studentId===record.studentId&&payment.id!==recordId).reduce((sum,payment)=>sum+paymentValue(payment),0))
+        if(student)patch('students',student.id,{paidAmount:Math.min(paidAmount,Number(student.agreedAmount||0)),paymentStatus:paidAmount>=Number(student.agreedAmount||0)?'Paid':paidAmount?'Partially Paid':'Pending'})
+      }
+      if(collection==='students'){
+        update('payments',(records)=>records.filter((payment)=>payment.studentId!==recordId))
+        update('mentoringSessions',(records)=>records.filter((session)=>session.studentId!==recordId))
       }
       if(collection==='payments'){
         const remainingData={...data,payments:data.payments.filter((payment)=>payment.id!==recordId)}

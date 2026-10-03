@@ -1,4 +1,6 @@
-export const services = [
+import { enrichServices } from '../services/serviceRegistry'
+
+export const services = enrichServices([
   { id: 'software', name: 'Software Development & Digital Solutions', shortName: 'Software Development', category: 'Technology', icon: 'code', description: 'Websites, applications and custom business systems.', offerings: ['Business websites', 'Web applications', 'Dashboards', 'Booking systems', 'E-commerce'] },
   { id: 'automation', name: 'Business Automation & AI Solutions', shortName: 'Automation & AI', category: 'Technology', icon: 'sparkles', description: 'Practical AI assistants and workflow automation for growing teams.', offerings: ['AI chat agents', 'Lead qualification', 'Workflow automation', 'Knowledge assistants'] },
   { id: 'creative', name: 'Advertising & Creative Business Promotions', shortName: 'Advertising & Creative', category: 'Creative', icon: 'megaphone', description: 'Campaign-ready video, imagery and promotional creative.', offerings: ['Promotional videos', 'Reels', 'Posters', 'Social creatives', 'Campaign concepts'] },
@@ -7,7 +9,7 @@ export const services = [
   { id: 'mentoring', name: 'Programming & Development Mentoring', shortName: 'Development Mentoring', category: 'Education', icon: 'graduation', description: 'Personalized programming guidance, project support and interview prep.', offerings: ['Programming fundamentals', 'Web development', 'Project guidance', 'Interview preparation'] },
   { id: 'custom', name: 'Other / Custom Solutions', shortName: 'Custom Solutions', category: 'Custom', icon: 'layers', description: 'Thoughtful solutions for unique business requirements.', offerings: ['Discovery', 'Custom delivery', 'Ongoing support'] },
   { id: 'products', name: 'MAGAF Public Products', shortName: 'Public Products', category: 'Product Studio', icon: 'sparkles', description: 'Internal tracking for MAGAF-owned SaaS, AI and developer products.', offerings: ['SaaS products', 'AI tools', 'Developer tools', 'Productivity utilities'] },
-]
+])
 
 const people = ['Chandu', 'Dileep', 'Ramesh']
 export const users = people.map((name, i) => ({ id: `u${i + 1}`, name, role: ['Founder', 'Technology', 'Operations'][i], email: `${name.toLowerCase()}@magaf.in`, status: 'Active' }))
@@ -85,6 +87,12 @@ export const payments = projects.flatMap((p, i) => p.paidAmount ? Array.from({le
   const date=i===0&&part<2?recentPaymentDates[part*2+1]:i===1?recentPaymentDates[part*2]:`2026-${String(((i+part)%6)+5).padStart(2,'0')}-${String(((i*2+part)%18)+1).padStart(2,'0')}`
   return {id:`pay${i*3+part+1}`,clientId:p.clientId,projectId:p.id,serviceId:p.serviceId,amount,date,method:['UPI','Bank Transfer','Cash'][(i+part)%3],type:['Advance','Partial Payment','Milestone Payment'][part],status:'Paid',reference:`MAG-${2600+i*3+part}`,notes:''}
 }):[])
+export const paymentsWithMentoring = [
+ ...payments,
+ { id:'pay-st1-1', studentId:'st1', serviceId:'mentoring', amount:8000, date:'2026-10-01', method:'UPI', type:'Advance', status:'Paid', reference:'MAG-MENT-001', notes:'Demo mentoring installment' },
+ { id:'pay-st2-1', studentId:'st2', serviceId:'mentoring', amount:7500, date:'2026-10-02', method:'Bank Transfer', type:'Partial Payment', status:'Paid', reference:'MAG-MENT-002', notes:'Demo mentoring installment' },
+ { id:'pay-st3-1', studentId:'st3', serviceId:'mentoring', amount:5000, date:'2026-09-28', method:'UPI', type:'Advance', status:'Paid', reference:'MAG-MENT-003', notes:'Demo mentoring installment' },
+]
 export const tasks = [
   { id:'t1', title:'Send homepage preview to Sunrise', projectId:'p1', clientId:'cl1', assignedTo:'Chandu', priority:'High', status:'Completed', deadline:'2026-10-02' },
   { id:'t2', title:'Edit clinic campaign cut', projectId:'p2', clientId:'cl2', assignedTo:'Dileep', priority:'Urgent', status:'In Progress', deadline:'2026-10-05' },
@@ -92,7 +100,7 @@ export const tasks = [
   { id:'t4', title:'Test lead qualification flow', projectId:'p6', clientId:'cl6', assignedTo:'Ramesh', priority:'High', status:'Review', deadline:'2026-10-08' },
   { id:'t5', title:'Finalize handloom product copy', projectId:'p7', clientId:'cl7', assignedTo:'Chandu', priority:'Medium', status:'Todo', deadline:'2026-10-11' },
 ]
-export const targets = { month: 'October 2026', clients: 10, revenue: 100000, projects: 15, leads: 100 }
+export const targets = { month: 'October 2026', clients: 10, revenue: 100000, projects: 15, leads: 100, students: 10 }
 export const activities = [
   { id:'a1', type:'payment', title:'₹7,000 payment received', detail:'GreenLeaf Family Clinic · Campaign', time:'Today, 10:42 AM', recordId:'cl2' },
   { id:'a2', type:'project', title:'Project moved to testing', detail:'Lead follow-up assistant · FitCore Studio', time:'Today, 9:18 AM', recordId:'p6' },
@@ -135,9 +143,9 @@ export const invoices = projects.slice(0, 4).map((project, index) => ({
   notes: 'Demo invoice record only. No PDF has been generated.',
 }))
 export const students = [
-  { id:'st1', name:'Aarav Mehta', contact:'+91 98765 43210', email:'aarav@example.in', goal:'Build a full-stack portfolio project', level:'Intermediate', topics:'React, Node.js, SQL', mentor:'Chandu', sessionType:'1:1', status:'Active', sessionsCompleted:6, sessionsRemaining:4, progress:'Built API and starting frontend' },
-  { id:'st2', name:'Sanjana Rao', contact:'+91 98123 45678', email:'sanjana@example.in', goal:'Strengthen Python and data structures', level:'Beginner', topics:'Python, DSA, OOP', mentor:'Ramesh', sessionType:'1:1', status:'Active', sessionsCompleted:3, sessionsRemaining:5, progress:'Practicing core programming' },
-  { id:'st3', name:'Vikram Nair', contact:'+91 99001 22445', email:'vikram@example.in', goal:'Prepare for junior developer interviews', level:'Advanced', topics:'Java, Collections, Interview preparation', mentor:'Chandu', sessionType:'1:1', status:'Paused', sessionsCompleted:8, sessionsRemaining:2, progress:'Resuming after exams' },
+  { id:'st1', serviceId:'mentoring', name:'Aarav Mehta', contact:'+91 98765 43210', email:'aarav@example.in', college:'Nexora Learning Hub', degree:'B.Tech', branch:'Computer Science', year:'3rd year', goal:'Build a full-stack portfolio project', level:'Intermediate', topics:'React, Node.js, SQL', mentor:'Chandu', sessionType:'1:1', status:'Active', sessionsCompleted:6, sessionsRemaining:4, agreedAmount:15000, paidAmount:8000, enrollmentDate:'2026-09-12', progress:'Built API and starting frontend' },
+  { id:'st2', serviceId:'mentoring', name:'Sanjana Rao', contact:'+91 98123 45678', email:'sanjana@example.in', college:'Nexora Learning Hub', degree:'B.Sc', branch:'Computer Science', year:'2nd year', goal:'Strengthen Python and data structures', level:'Beginner', topics:'Python, DSA, OOP', mentor:'Ramesh', sessionType:'1:1', status:'Active', sessionsCompleted:3, sessionsRemaining:5, agreedAmount:12000, paidAmount:7500, enrollmentDate:'2026-09-25', progress:'Practicing core programming' },
+  { id:'st3', serviceId:'mentoring', name:'Vikram Nair', contact:'+91 99001 22445', email:'vikram@example.in', college:'Independent', degree:'B.Tech', branch:'Information Technology', year:'4th year', goal:'Prepare for junior developer interviews', level:'Advanced', topics:'Java, Collections, Interview preparation', mentor:'Chandu', sessionType:'1:1', status:'Paused', sessionsCompleted:8, sessionsRemaining:2, agreedAmount:10000, paidAmount:5000, enrollmentDate:'2026-08-18', progress:'Resuming after exams' },
 ]
 export const deals = [
   ...projects.map((project, index) => ({
@@ -176,7 +184,15 @@ export const communications = [
   { id:'com1',clientId:'cl2',projectId:'p2',date:'2026-10-02',channel:'WhatsApp',person:'Dr. Vivek Rao',summary:'Shared campaign direction and clinic branding references.',followUpDate:'2026-10-05',notes:'Client prefers warm, family-focused language.' },
   { id:'com2',clientId:'cl7',projectId:'p7',date:'2026-10-01',channel:'Phone',person:'Srinivas Rao',summary:'Confirmed initial product categories for the online store.',followUpDate:'2026-10-06',notes:'Internal: confirm catalog spreadsheet before importing.' },
 ]
-export const initialData = { services, clients, leads, deals, projects, payments, invoices, tasks, targets, activities, users, assets, files, content, products, students, milestones, revisions, communications, notifications: [
+export const projectRequests = [
+  { id:'req1', clientId:'cl7', serviceId:'software', projectName:'Handloom wholesale catalogue', description:'Create a catalogue and enquiry workflow for wholesale buyers.', problemStatement:'Wholesale buyers currently request product details manually.', expectedOutcome:'A searchable online catalogue with enquiry capture.', requirements:'Mobile-friendly catalogue, product categories, WhatsApp enquiry links.', estimatedBudget:35000, proposedPrice:0, desiredDeadline:'2026-11-20', priority:'High', submittedAt:'2026-10-02', preferredCommunication:'WhatsApp', status:'Submitted', clientNotes:'We can share product photos and the current catalogue.', teamNotes:'' },
+  { id:'req2', clientId:'cl3', serviceId:'content', projectName:'Holiday season content package', description:'Plan and create a short seasonal content campaign for the cafe.', problemStatement:'Need a consistent plan for the holiday menu launch.', expectedOutcome:'A month of ready-to-publish social content.', requirements:'Instagram posts, captions and 3 short-form videos.', estimatedBudget:12000, proposedPrice:14000, desiredDeadline:'2026-11-05', priority:'Medium', submittedAt:'2026-10-01', preferredCommunication:'Email', status:'Under Review', clientNotes:'Please include the new dessert menu.', teamNotes:'Review scope and confirm video quantity.' },
+]
+export const mentoringSessions = [
+  { id:'ms1', studentId:'st1', topic:'React component architecture', date:'2026-10-05', durationMinutes:60, status:'Scheduled', mentor:'Chandu', notes:'' },
+  { id:'ms2', studentId:'st2', topic:'Python data structures', date:'2026-10-06', durationMinutes:60, status:'Scheduled', mentor:'Ramesh', notes:'' },
+]
+export const initialData = { schemaVersion:2, services, clients, leads, deals, projects, payments:paymentsWithMentoring, invoices, tasks, targets, activities, users, assets, files, content, products, students, mentoringSessions, projectRequests, milestones, revisions, communications, notifications: [
   {id:'n1',type:'follow-up',title:'Follow-up due today',detail:'Lotus Dental Care proposal',time:'Today'},
   {id:'n2',type:'deadline',title:'Project deadline approaching',detail:'Clinic launch campaign · Oct 5',time:'Today'},
   {id:'n3',type:'payment',title:'Partial payment received',detail:'GreenLeaf Family Clinic · ₹7,000',time:'Today'},

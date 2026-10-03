@@ -68,27 +68,27 @@ function BarList({ items, labelKey, valueKey, format = (value) => value, tone = 
 }
 
 function ServiceComparisonChart({ items }) {
-  const maxClients = Math.max(...items.map((item) => item.clients), 1)
+  const maxClients = Math.max(...items.map((item) => item.service.supportsStudents ? item.students : item.clients), 1)
   const maxRevenue = Math.max(...items.map((item) => item.revenue), 1)
-  const hasActivity = items.some((item) => item.clients > 0 || item.revenue > 0)
+  const hasActivity = items.some((item) => item.clients > 0 || item.students > 0 || item.revenue > 0)
 
   return <section className="panel service-comparison-panel">
     <div className="panel-heading">
       <div><span className="eyebrow">SERVICE-BY-SERVICE RESULTS</span><h2>Clients and money collected</h2></div>
-      <span className="service-chart-period">{items.length} services · {hasActivity ? 'actual records' : 'no activity yet'}</span>
+      <span className="service-chart-period">{items.length} services · all-time actuals</span>
     </div>
-    <div className="service-chart-legend"><span><i className="client-bar-key"/>Clients</span><span><i className="revenue-bar-key"/>Collected revenue</span></div>
-    <div className="service-comparison-list">{items.map(({ service, clients, revenue }) => <div className="service-comparison-row" key={service.id}>
+    <div className="service-chart-legend"><span><i className="client-bar-key"/>Clients / students</span><span><i className="revenue-bar-key"/>Collected revenue</span></div>
+    <div className="service-comparison-list">{items.map(({ service, clients, students, revenue }) => {const count=service.supportsStudents?students:clients;const countLabel=service.supportsStudents?'students':'clients';return <div className="service-comparison-row" key={service.id}>
       <div className="service-comparison-name"><span className="service-comparison-icon"><Icon name={service.icon} size={16}/></span><strong title={service.name}>{service.shortName}</strong></div>
       <div className="service-comparison-metric">
-        <div className="service-metric-label"><span>Clients</span><b>{clients}</b></div>
-        <div className="service-comparison-track" role="img" aria-label={`${clients} clients`}><i className="client-bar" style={{ width: `${clients ? Math.max(clients / maxClients * 100, 2) : 0}%` }}/></div>
+        <div className="service-metric-label"><span>{service.supportsStudents?'Students':'Clients'}</span><b>{count}</b></div>
+        <div className="service-comparison-track" role="img" aria-label={`${count} ${countLabel}`}><i className="client-bar" style={{ width: `${count ? Math.max(count / maxClients * 100, 2) : 0}%` }}/></div>
       </div>
       <div className="service-comparison-metric">
         <div className="service-metric-label"><span>Collected</span><b>{currency(revenue)}</b></div>
         <div className="service-comparison-track" role="img" aria-label={`${currency(revenue)} collected`}><i className="revenue-bar" style={{ width: `${revenue > 0 ? Math.max(revenue / maxRevenue * 100, 2) : 0}%` }}/></div>
       </div>
-    </div>)}</div>
+    </div>})}</div>
     {!hasActivity && <p className="service-comparison-empty">Service totals will grow automatically as clients are associated with services and payments are recorded.</p>}
   </section>
 }
@@ -103,7 +103,7 @@ export default function Dashboard({ navigate, quickAdd }) {
   const days = range === 'month' ? today.getDate() : range === 'previous' ? new Date(today.getFullYear(), today.getMonth(), 0).getDate() : range === 'all' ? 30 : periodDays
   const chartEndDate = range === 'previous' ? new Date(today.getFullYear(), today.getMonth(), 0) : today
   const stats = dashboardStats(data)
-  const targets = data.targets || { clients: 10, revenue: 100000 }
+  const targets = data.targets || { clients: 10, revenue: 100000, students:10 }
   const monthClients = data.clients.filter((client) => client.createdAt?.startsWith(targetMonthPrefix(data))).length
   const revenueProgress = Math.min(100, Math.round(stats.monthRevenue / Math.max(Number(targets.revenue), 1) * 100))
   const clientProgress = Math.min(100, Math.round(monthClients / Math.max(Number(targets.clients), 1) * 100))
@@ -115,13 +115,15 @@ export default function Dashboard({ navigate, quickAdd }) {
     return {
       ...data,
       clients: data.clients.filter((client) => inRange(client.createdAt, range, days)),
+      students:data.students.filter((student)=>inRange(student.enrollmentDate||student.createdAt,range,days)),
       payments: filteredPayments,
       projects: data.projects.filter((project) => eligibleProjectIds.has(project.id)),
       deals: data.deals.filter((deal) => eligibleDealIds.has(deal.id)),
       leads: data.leads.filter((lead) => inRange(lead.createdAt, range, days)),
+      projectRequests:data.projectRequests.filter((request)=>inRange(request.submittedAt||request.createdAt,range,days)),
     }
   })()
-  const serviceRows = servicePerformance(filteredData).sort((a, b) => b[serviceMetric] - a[serviceMetric])
+  const serviceRows = servicePerformance(filteredData).sort((a, b) => (serviceMetric==='clients'?(b.service.supportsStudents?b.students:b.clients)-(a.service.supportsStudents?a.students:a.clients):b[serviceMetric]-a[serviceMetric]))
   const plottedRevenue = revenueWindow({ ...data, payments: filteredPayments }, days, chartEndDate)
   const dailyTotal = plottedRevenue.reduce((sum, point) => sum + point.revenue, 0)
   const cards = [
@@ -135,6 +137,9 @@ export default function Dashboard({ navigate, quickAdd }) {
     ['Amount collected', currency(stats.totalPaid), 'Across all client work', 'card', 'blue', 'payments', stats.bookedRevenue ? Math.min(100, stats.totalPaid / stats.bookedRevenue * 100) : 0],
     ['Outstanding balance', currency(stats.pending), 'Remaining on active agreements', 'clock', 'amber', 'payments', stats.bookedRevenue ? Math.min(100, stats.pending / stats.bookedRevenue * 100) : 0],
     ['Revenue this month', currency(stats.monthRevenue), 'Collected in the current month', 'chart', 'violet', 'payments', revenueProgress],
+    ['Mentoring students', stats.students, `${stats.activeStudents} active students`, 'graduation', 'violet', 'students', Math.min(100,stats.students/Math.max(Number(targets.students||10),1)*100)],
+    ['Mentoring revenue', currency(stats.mentoringRevenue), 'Included in MAGAF revenue', 'trend', 'green', 'analytics', stats.bookedRevenue?Math.min(100,stats.mentoringRevenue/stats.bookedRevenue*100):0],
+    ['New project requests', stats.newRequests, `${stats.totalRequests} requests total`, 'file', 'amber', 'requests', Math.min(100,stats.newRequests/Math.max(Number(targets.requests||10),1)*100)],
   ]
   const activities = data.activities.slice(0, 6)
   return <div className="page-stack">
@@ -143,11 +148,11 @@ export default function Dashboard({ navigate, quickAdd }) {
     <section className="kpi-grid">{cards.map(([label, value, sub, icon, tint, route, progress]) => <button className="kpi-card" onClick={() => navigate(route)} key={label}><div className="kpi-top"><span className={`kpi-icon ${tint}`}><Icon name={icon}/></span><span className="kpi-more"><Icon name="more"/></span></div><span className="kpi-label">{label}</span><strong className="kpi-value">{value}</strong><span className="kpi-progress" aria-label={`${Math.round(progress)}% progress`}><i style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}/></span><span className="kpi-foot">{sub}</span></button>)}</section>
     <div className="dashboard-grid">
       <section className="panel analytics-panel"><div className="panel-heading"><div><span className="eyebrow">PAYMENT LEDGER · ACTUAL TRANSACTIONS</span><h2>Daily revenue</h2></div><select className="analytics-select" aria-label="Revenue date range" value={range} onChange={(event) => setRange(event.target.value)}>{ranges.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></div><div className="analytics-total"><strong>{currency(dailyTotal)}</strong><span>{range === 'all' ? 'Recent 30 days · daily view' : `${currentRange?.[1]} · daily total`}</span></div><RevenueChart data={{ ...data, payments: filteredPayments }} days={days} endDate={chartEndDate}/></section>
-      <section className="panel target-panel"><div className="panel-heading"><div><span className="eyebrow">{targets.month || 'MONTHLY TARGETS'}</span><h2>Growth targets</h2></div><button className="text-action" onClick={() => navigate('targets')}>Manage <Icon name="arrow" size={14}/></button></div><div className="target-item"><ProgressRing value={clientProgress}/><div className="target-copy"><span>Client acquisition</span><strong>{monthClients}<small> / {targets.clients} clients</small></strong><span className="target-remaining">{Math.max(Number(targets.clients) - monthClients, 0)} to go this month</span></div></div><div className="target-divider"/><div className="target-item"><ProgressRing value={revenueProgress}/><div className="target-copy"><span>Revenue collected</span><strong>{currency(stats.monthRevenue)}<small> / {currency(targets.revenue)}</small></strong><span className="target-remaining">{currency(Math.max(Number(targets.revenue) - stats.monthRevenue, 0))} remaining</span></div></div></section>
+      <section className="panel target-panel"><div className="panel-heading"><div><span className="eyebrow">{targets.month || 'MONTHLY TARGETS'}</span><h2>Growth targets</h2></div><button className="text-action" onClick={() => navigate('targets')}>Manage <Icon name="arrow" size={14}/></button></div><div className="target-item"><ProgressRing value={clientProgress}/><div className="target-copy"><span>Client acquisition</span><strong>{monthClients}<small> / {targets.clients} clients</small></strong><span className="target-remaining">{Math.max(Number(targets.clients) - monthClients, 0)} to go this month</span></div></div><div className="target-divider"/><div className="target-item"><ProgressRing value={revenueProgress}/><div className="target-copy"><span>Revenue collected</span><strong>{currency(stats.monthRevenue)}<small> / {currency(targets.revenue)}</small></strong><span className="target-remaining">{currency(Math.max(Number(targets.revenue) - stats.monthRevenue, 0))} remaining</span></div></div><div className="target-divider"/><div className="target-item"><ProgressRing value={Math.min(100,Math.round(stats.students/Math.max(Number(targets.students||10),1)*100))}/><div className="target-copy"><span>Mentoring students</span><strong>{stats.students}<small> / {targets.students||10} students</small></strong><span className="target-remaining">{Math.max(Number(targets.students||10)-stats.students,0)} to go</span></div></div></section>
     </div>
-    <ServiceComparisonChart items={serviceRows}/>
+    <ServiceComparisonChart items={servicePerformance(data)}/>
     <div className="dashboard-grid analytics-grid">
-      <section className="panel"><div className="panel-heading"><div><span className="eyebrow">SERVICE MIX</span><h2>Service performance</h2></div><select className="analytics-select" value={serviceMetric} onChange={(event) => setServiceMetric(event.target.value)} aria-label="Service performance metric"><option value="revenue">Revenue</option><option value="clients">Clients</option><option value="projects">Projects</option></select></div><BarList items={serviceRows.map((item) => ({ name: item.service.shortName, value: item[serviceMetric] }))} labelKey="name" valueKey="value" format={serviceMetric === 'revenue' ? currency : (value) => value}/></section>
+      <section className="panel"><div className="panel-heading"><div><span className="eyebrow">SERVICE MIX</span><h2>Service performance</h2></div><select className="analytics-select" value={serviceMetric} onChange={(event) => setServiceMetric(event.target.value)} aria-label="Service performance metric"><option value="revenue">Revenue</option><option value="clients">Clients / students</option><option value="projects">Projects</option></select></div><BarList items={serviceRows.map((item) => ({ name: item.service.shortName, value: serviceMetric==='clients'?(item.service.supportsStudents?item.students:item.clients):item[serviceMetric] }))} labelKey="name" valueKey="value" format={serviceMetric === 'revenue' ? currency : (value) => value}/></section>
       <section className="panel"><div className="panel-heading"><div><span className="eyebrow">REVENUE SHARE</span><h2>Revenue by service</h2></div></div><DonutChart items={revenueByService(filteredData)}/></section>
     </div>
     <div className="dashboard-grid analytics-grid">
@@ -156,7 +161,7 @@ export default function Dashboard({ navigate, quickAdd }) {
     </div>
     <div className="dashboard-grid">
       <section className="panel"><div className="panel-heading"><div><span className="eyebrow">COLLECTION HEALTH</span><h2>Payment status</h2></div><button className="text-action" onClick={() => navigate('payments')}>View payments <Icon name="arrow" size={14}/></button></div><div className="payment-status-grid">{paymentStatusCounts(data).map((item) => <div className="payment-status-card" key={item.status}><strong>{item.count}</strong><span>{item.status}</span></div>)}</div></section>
-      <section className="panel activity-panel"><div className="panel-heading"><div><span className="eyebrow">THE LATEST</span><h2>Recent activity</h2></div><button className="text-action" onClick={() => navigate('reports')}>All activity <Icon name="arrow" size={14}/></button></div><div className="activity-list">{activities.map((activity) => <button className="activity-row" key={activity.id} onClick={() => navigate(activity.type === 'payment' ? 'payments' : `${activity.type === 'lead' ? 'leads' : activity.type === 'client' ? 'clients' : activity.type === 'deal' ? 'deals' : 'projects'}/${activity.recordId}`)}><span className={`activity-mark ${activity.type}`}><Icon name={activity.type === 'payment' ? 'card' : activity.type === 'lead' ? 'user' : activity.type === 'client' ? 'users' : 'briefcase'} size={15}/></span><span className="activity-copy"><strong>{activity.title}</strong><small>{activity.detail}</small></span><time>{activity.time?.split(',')[0] || 'Recently'}</time></button>)}{!activities.length && <div className="chart-empty">New activity will appear here as the team updates records.</div>}</div></section>
+      <section className="panel activity-panel"><div className="panel-heading"><div><span className="eyebrow">THE LATEST</span><h2>Recent activity</h2></div><button className="text-action" onClick={() => navigate('reports')}>All activity <Icon name="arrow" size={14}/></button></div><div className="activity-list">{activities.map((activity) => <button className="activity-row" key={activity.id} onClick={() => navigate(activity.type === 'payment' ? 'payments' : activity.type==='request'?'requests':activity.type==='student'||activity.type==='session'?'students':`${activity.type === 'lead' ? 'leads' : activity.type === 'client' ? 'clients' : activity.type === 'deal' ? 'deals' : 'projects'}/${activity.recordId}`)}><span className={`activity-mark ${activity.type}`}><Icon name={activity.type === 'payment' ? 'card' : activity.type === 'lead' ? 'user' : activity.type === 'client' ? 'users' : activity.type==='request'?'file':activity.type==='student'||activity.type==='session'?'graduation':'briefcase'} size={15}/></span><span className="activity-copy"><strong>{activity.title}</strong><small>{activity.detail}</small></span><time>{activity.time?.split(',')[0] || 'Recently'}</time></button>)}{!activities.length && <div className="chart-empty">New activity will appear here as the team updates records.</div>}</div></section>
     </div>
   </div>
 }

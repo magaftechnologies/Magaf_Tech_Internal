@@ -8,7 +8,7 @@ const readFile=(file)=>new Promise((resolve,reject)=>{const reader=new FileReade
 
 export default function ClientPortal() {
   const {user,logout}=useAuth()
-  const {data,addFile,addRevision,setDeliverableStatus,patch}=useData()
+  const {data,addFile,addRevision,addProjectRequest,addPayment,setDeliverableStatus,patch}=useData()
   const client=data.clients.find((item)=>item.id===user.clientId)
   const [activeProject,setActiveProject]=useState('')
   const [revisionProject,setRevisionProject]=useState('')
@@ -17,17 +17,25 @@ export default function ClientPortal() {
   const [uploadFiles,setUploadFiles]=useState([])
   const [uploadUrl,setUploadUrl]=useState('')
   const [uploadDescription,setUploadDescription]=useState('')
+  const [requestForm,setRequestForm]=useState({serviceId:'',projectName:'',description:'',problemStatement:'',expectedOutcome:'',requirements:'',estimatedBudget:'',desiredDeadline:'',priority:'Medium',preferredCommunication:'Email',clientNotes:''})
+  const [requestFiles,setRequestFiles]=useState([])
+  const [requestLinks,setRequestLinks]=useState('')
+  const [paymentProject,setPaymentProject]=useState('')
+  const [paymentAmount,setPaymentAmount]=useState('')
+  const [paymentMethod,setPaymentMethod]=useState('UPI')
   const [message,setMessage]=useState('')
   const [busy,setBusy]=useState(false)
   if(!client)return <main className="portal-invalid"><section className="panel"><h1>Client profile unavailable</h1><p>This demo portal account is no longer connected to a client record.</p><button className="button button-primary" onClick={logout}>Return to sign in</button></section></main>
   const projects=clientProjects(data,client.id)
   const projectIds=new Set(projects.map((project)=>project.id))
+  const requests=data.projectRequests.filter((request)=>request.clientId===client.id)
+  const requestIds=new Set(requests.map((request)=>request.id))
   const deals=data.deals.filter((deal)=>deal.clientId===client.id)
   const payments=data.payments.filter((payment)=>payment.clientId===client.id)
   const invoices=data.invoices.filter((invoice)=>invoice.clientId===client.id)
   const dealIds=new Set(deals.map((deal)=>deal.id))
-  const clientNotifications=data.notifications.filter((item)=>item.recordId===client.id||projects.some((project)=>project.id===item.recordId)||dealIds.has(item.recordId))
-  const files=data.files.filter((file)=>(file.clientId===client.id||projectIds.has(file.projectId))&&file.visibility==='Client')
+  const clientNotifications=data.notifications.filter((item)=>item.recordId===client.id||projects.some((project)=>project.id===item.recordId)||dealIds.has(item.recordId)||requests.some((request)=>request.id===item.recordId))
+  const files=data.files.filter((file)=>(file.clientId===client.id||projectIds.has(file.projectId)||requestIds.has(file.projectRequestId))&&file.visibility==='Client')
   const visibleTasks=data.tasks.filter((task)=>(task.clientId===client.id||projectIds.has(task.projectId))&&task.clientVisible===true)
   const milestones=data.milestones.filter((item)=>projects.some((project)=>project.id===item.projectId)&&item.clientVisible)
   const revisions=data.revisions.filter((item)=>(item.clientId===client.id||projectIds.has(item.projectId))&&item.clientVisible)
@@ -51,6 +59,37 @@ export default function ClientPortal() {
     setRevisionText('')
     setRevisionProject('')
     setMessage('Revision request sent to the MAGAF team.')
+  }
+  const submitRequest=async(event)=>{
+    event.preventDefault()
+    if(!requestForm.serviceId||!requestForm.projectName.trim()||!requestForm.description.trim()){setMessage('Choose a service and enter a project name and description.');return}
+    if(requestFiles.length>5||requestFiles.some((file)=>file.size>1_500_000)){setMessage('In demo mode, attach up to 5 files (1.5 MB each) or share a Drive link.');return}
+    const links=requestLinks.split(/\r?\n/).map((url)=>url.trim()).filter(Boolean)
+    if(links.some((url)=>{try{return !['http:','https:'].includes(new URL(url).protocol)}catch{return true}})){setMessage('Project links must use a valid http or https URL.');return}
+    setBusy(true)
+    try{
+      const encodedFiles=await Promise.all(requestFiles.map(async(file)=>({name:file.name,type:file.type||'File',size:file.size,fileData:await readFile(file)})))
+      const request=addProjectRequest({...requestForm,projectName:requestForm.projectName.trim(),description:requestForm.description.trim(),estimatedBudget:Number(requestForm.estimatedBudget||0),clientId:client.id,clientName:client.name})
+      encodedFiles.forEach((record)=>addFile({...record,category:'Requirement',clientId:client.id,projectRequestId:request.id,uploadedBy:'Client',uploadedAt:new Date().toISOString().slice(0,10),visibility:'Client',description:'Project request attachment'}))
+      links.forEach((url,index)=>addFile({name:`Request link ${index+1}`,type:'Link',category:'Reference',clientId:client.id,projectRequestId:request.id,uploadedBy:'Client',uploadedAt:new Date().toISOString().slice(0,10),visibility:'Client',url,description:'Client-provided project request link'}))
+      setRequestForm({serviceId:'',projectName:'',description:'',problemStatement:'',expectedOutcome:'',requirements:'',estimatedBudget:'',desiredDeadline:'',priority:'Medium',preferredCommunication:'Email',clientNotes:''})
+      setRequestFiles([])
+      setRequestLinks('')
+      setMessage('Your project request has been submitted to MAGAF.')
+    }catch(error){console.error('Unable to submit project request.',error);setMessage(error.message||'Could not submit this request. Please try again.')}
+    finally{setBusy(false)}
+  }
+  const submitDummyPayment=(event)=>{
+    event.preventDefault()
+    const project=projects.find((item)=>item.id===paymentProject)
+    if(!project){setMessage('Choose a project to make a demo payment.');return}
+    const amount=Number(paymentAmount)
+    if(!Number.isFinite(amount)||amount<=0){setMessage('Enter a valid payment amount.');return}
+    try{
+      addPayment({clientId:client.id,projectId:project.id,dealId:project.dealId,serviceId:project.serviceId,amount,date:new Date().toISOString().slice(0,10),method:paymentMethod,type:'Partial Payment',notes:'Client portal mock payment. No funds were transferred.'})
+      setPaymentAmount('')
+      setMessage('Demo payment recorded. No real money was transferred.')
+    }catch(error){setMessage(error.message)}
   }
   const submitUpload=async(event)=>{
     event.preventDefault()
@@ -79,6 +118,24 @@ export default function ClientPortal() {
     <div className="portal-content"><section className="portal-welcome"><div><span className="eyebrow">YOUR MAGAF WORKSPACE</span><h1>Welcome, <em>{(client.contact||client.name).split(' ')[0]}.</em></h1><p>Your projects, shared files and next steps — all in one place.</p></div><span className="portal-client-chip"><span className="avatar">{client.name.slice(0,1)}</span><span><b>{client.name}</b><small>{client.category||'Client'}</small></span></span></section>
       <section className="portal-summary"><PortalStat label="Active projects" value={projects.filter((project)=>!['Completed','Cancelled'].includes(project.status)).length} icon="briefcase"/><PortalStat label="Completed" value={projects.filter((project)=>project.status==='Completed').length} icon="check"/><PortalStat label="Amount paid" value={currency(clientPaid(data,client.id))} icon="trend"/><PortalStat label="Balance due" value={currency(clientOutstanding(data,client.id))} icon="card"/></section>
       {message&&<div className="portal-message" role="status"><Icon name="check" size={15}/>{message}<button onClick={()=>setMessage('')} aria-label="Dismiss">×</button></div>}
+      <section className="portal-panel portal-requests"><div className="portal-section-heading"><div><span className="eyebrow">START SOMETHING NEW</span><h2>Project requests</h2></div><span className="portal-count">{requests.length} submitted</span></div>
+        <form className="portal-form portal-request-form" onSubmit={submitRequest}>
+          <label className="field">Requested service<select value={requestForm.serviceId} onChange={(event)=>setRequestForm({...requestForm,serviceId:event.target.value})} required><option value="">Choose a service</option>{data.services.filter((service)=>service.supportsRequests!==false&&service.status!=='Inactive').map((service)=><option key={service.id} value={service.id}>{service.shortName||service.name}</option>)}</select></label>
+          <label className="field">Project name<input value={requestForm.projectName} onChange={(event)=>setRequestForm({...requestForm,projectName:event.target.value})} required/></label>
+          <label className="field">Description<textarea rows="3" value={requestForm.description} onChange={(event)=>setRequestForm({...requestForm,description:event.target.value})} required placeholder="What would you like MAGAF to create?"/></label>
+          <label className="field">Problem to solve<textarea rows="2" value={requestForm.problemStatement} onChange={(event)=>setRequestForm({...requestForm,problemStatement:event.target.value})}/></label>
+          <label className="field">Expected outcome<textarea rows="2" value={requestForm.expectedOutcome} onChange={(event)=>setRequestForm({...requestForm,expectedOutcome:event.target.value})}/></label>
+          <label className="field">Requirements<textarea rows="2" value={requestForm.requirements} onChange={(event)=>setRequestForm({...requestForm,requirements:event.target.value})} placeholder="Features, references, or other details"/></label>
+          <label className="field">Estimated budget (₹)<input type="number" min="0" value={requestForm.estimatedBudget} onChange={(event)=>setRequestForm({...requestForm,estimatedBudget:event.target.value})}/></label>
+          <label className="field">Desired deadline<input type="date" value={requestForm.desiredDeadline} onChange={(event)=>setRequestForm({...requestForm,desiredDeadline:event.target.value})}/></label>
+          <label className="field">Preferred communication<select value={requestForm.preferredCommunication} onChange={(event)=>setRequestForm({...requestForm,preferredCommunication:event.target.value})}>{['Email','WhatsApp','Phone','Meeting'].map((method)=><option key={method}>{method}</option>)}</select></label>
+          <label className="field">Additional notes<textarea rows="2" value={requestForm.clientNotes} onChange={(event)=>setRequestForm({...requestForm,clientNotes:event.target.value})}/></label>
+          <label className="field">Requirements, images, documents, video or voice<input type="file" multiple accept="image/*,application/pdf,.doc,.docx,.txt,video/*,audio/*" onChange={(event)=>setRequestFiles(Array.from(event.target.files||[]))}/><small>Multiple attachments supported; local demo files up to 1.5 MB each.</small></label>
+          <label className="field">External links<textarea rows="2" value={requestLinks} onChange={(event)=>setRequestLinks(event.target.value)} placeholder="One URL per line — Drive, video, design reference…"/></label>
+          <button className="button button-primary" disabled={busy}><Icon name="arrow" size={15}/>{busy?'Submitting…':'Submit project request'}</button>
+        </form>
+        {requests.length>0&&<div className="portal-request-list">{requests.map((request)=><article className="portal-request-card" key={request.id}><div><strong>{request.projectName}</strong><small>{data.services.find((service)=>service.id===request.serviceId)?.shortName||'MAGAF service'} · submitted {request.submittedAt}</small></div><span className="status-pill">{request.status}</span>{request.informationRequested&&<p>{request.informationRequested}</p>}<small>{files.filter((file)=>file.projectRequestId===request.id).length} attachments · desired by {request.desiredDeadline||'Not specified'}</small></article>)}</div>}
+      </section>
       <div className="portal-main-grid"><section className="portal-section"><div className="portal-section-heading"><div><span className="eyebrow">YOUR WORK</span><h2>Projects</h2></div><span className="portal-count">{projects.length} total</span></div>{projects.length?projects.map((project)=>{
         const service=data.services.find((item)=>item.id===project.serviceId)
           const value=Number(project.agreedAmount||0)
@@ -96,7 +153,8 @@ export default function ClientPortal() {
         <section className="portal-panel"><div className="portal-section-heading"><div><span className="eyebrow">NOTIFICATIONS</span><h2>Recent updates</h2></div></div>{clientNotifications.slice(0,5).map((item)=><div className="portal-timeline-item" key={item.id}><span className="portal-timeline-dot"/><div><strong>{item.title}</strong><small>{item.detail}</small><time>{item.time||'Recently'}</time></div></div>)}{!clientNotifications.length&&<PortalEmpty text="There are no recent notifications."/>}</section>
       </aside></div>
       <div className="portal-actions-grid"><section className="portal-panel"><div className="portal-section-heading"><div><span className="eyebrow">NEED A CHANGE?</span><h2>Request a revision</h2></div><Icon name="sparkles" size={18}/></div><form className="portal-form" onSubmit={submitRevision}><label className="field">Project<select value={revisionProject} onChange={(event)=>setRevisionProject(event.target.value)}><option value="">Select a project</option>{projects.map((project)=><option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="field">What would you like us to change?<textarea rows="3" value={revisionText} onChange={(event)=>setRevisionText(event.target.value)} placeholder="Describe the requested change…"/></label><button className="button button-primary" disabled={!projects.length}><Icon name="arrow" size={15}/> Send revision request</button></form>{revisions.length>0&&<div className="revision-list">{revisions.slice(0,3).map((revision)=><div key={revision.id}><span className="status-pill">{revision.status}</span><p>{revision.description}</p><small>Revision {revision.number||''} · {revision.date}</small></div>)}</div>}</section>
-      <section className="portal-panel"><div className="portal-section-heading"><div><span className="eyebrow">SHARE MATERIALS</span><h2>Upload project files</h2></div><Icon name="file" size={18}/></div><form className="portal-form" onSubmit={submitUpload}><label className="field">Project<select value={uploadProject} onChange={(event)=>setUploadProject(event.target.value)}><option value="">Select a project</option>{projects.map((project)=><option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="field">Select files<input type="file" multiple onChange={(event)=>setUploadFiles(Array.from(event.target.files||[]))}/><small>Up to 5 files, 1.5 MB each in demo mode.</small></label>{uploadFiles.length>0&&<div className="selected-files">{uploadFiles.map((file)=>file.name).join(' · ')}</div>}<label className="field">Google Drive / external link<input type="url" value={uploadUrl} onChange={(event)=>setUploadUrl(event.target.value)} placeholder="https://drive.google.com/…"/></label><label className="field">What are you sharing?<input value={uploadDescription} onChange={(event)=>setUploadDescription(event.target.value)} placeholder="Logo, reference video, requirements…"/></label><button className="button button-primary" disabled={busy}><Icon name="plus" size={15}/>{busy?'Sharing…':'Share with MAGAF'}</button></form></section></div>
+      <section className="portal-panel"><div className="portal-section-heading"><div><span className="eyebrow">SHARE MATERIALS</span><h2>Upload project files</h2></div><Icon name="file" size={18}/></div><form className="portal-form" onSubmit={submitUpload}><label className="field">Project<select value={uploadProject} onChange={(event)=>setUploadProject(event.target.value)}><option value="">Select a project</option>{projects.map((project)=><option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="field">Select files<input type="file" multiple onChange={(event)=>setUploadFiles(Array.from(event.target.files||[]))}/><small>Up to 5 files, 1.5 MB each in demo mode.</small></label>{uploadFiles.length>0&&<div className="selected-files">{uploadFiles.map((file)=>file.name).join(' · ')}</div>}<label className="field">Google Drive / external link<input type="url" value={uploadUrl} onChange={(event)=>setUploadUrl(event.target.value)} placeholder="https://drive.google.com/…"/></label><label className="field">What are you sharing?<input value={uploadDescription} onChange={(event)=>setUploadDescription(event.target.value)} placeholder="Logo, reference video, requirements…"/></label><button className="button button-primary" disabled={busy}><Icon name="plus" size={15}/>{busy?'Sharing…':'Share with MAGAF'}</button></form></section>
+      <section className="portal-panel portal-demo-payment"><div className="portal-section-heading"><div><span className="eyebrow">MOCK PAYMENT · NO REAL FUNDS</span><h2>Make a demo payment</h2></div><Icon name="card" size={18}/></div><form className="portal-form" onSubmit={submitDummyPayment}><label className="field">Project<select value={paymentProject} onChange={(event)=>setPaymentProject(event.target.value)} required><option value="">Select a project with a balance</option>{projects.filter((project)=>projectOutstanding(data,project)>0).map((project)=><option key={project.id} value={project.id}>{project.name} · {currency(projectOutstanding(data,project))} due</option>)}</select></label><label className="field">Payment amount (₹)<input type="number" min="1" value={paymentAmount} onChange={(event)=>setPaymentAmount(event.target.value)} required/></label><label className="field">Demo payment method<select value={paymentMethod} onChange={(event)=>setPaymentMethod(event.target.value)}>{['UPI','Card','Net Banking','Other'].map((method)=><option key={method}>{method}</option>)}</select></label><p className="portal-muted">This records a sample transaction for workflow demonstration only. No payment provider or money transfer is involved.</p><button className="button button-primary" disabled={!projects.some((project)=>projectOutstanding(data,project)>0)}><Icon name="card" size={15}/> Record demo payment</button></form>{payments.slice(0,5).map((payment)=><div className="portal-timeline-item" key={payment.id}><span className="portal-timeline-dot"/><div><strong>{currency(payment.amount)} · {payment.method}</strong><small>{payment.date} · {payment.reference||payment.id}</small></div></div>)}</section></div>
       <section className="portal-payment-panel"><div className="portal-section-heading"><div><span className="eyebrow">ACCOUNT SUMMARY</span><h2>Deals & payments</h2></div></div><div className="table-scroll"><table><thead><tr><th>Project / deal</th><th>Deal status</th><th>Agreed amount</th><th>Paid</th><th>Balance</th></tr></thead><tbody>{projects.map((project)=>{const deal=deals.find((item)=>item.projectId===project.id);const paid=projectPaid(data,project);return <tr key={project.id}><td>{project.name}</td><td>{deal?.status||project.status}</td><td>{currency(project.agreedAmount)}</td><td>{currency(paid)}</td><td>{currency(projectOutstanding(data,project))}</td></tr>})}{deals.filter((deal)=>!deal.projectId&&!projects.some((project)=>project.dealId===deal.id)).map((deal)=><tr key={deal.id}><td>{deal.title}</td><td>{deal.status}</td><td>{currency(deal.agreedAmount||deal.quotedAmount)}</td><td>{currency(deal.paidAmount||0)}</td><td>{currency(Math.max(0,Number(deal.agreedAmount||deal.quotedAmount||0)-Number(deal.paidAmount||0)))}</td></tr>)}</tbody></table></div>{!projects.length&&!deals.length&&<PortalEmpty text="Your agreements and payment history will appear here."/>}</section>
       <footer className="portal-footer"><span>MAGAF Technologies · Secure client workspace</span><span>Need help? Contact your MAGAF project lead.</span></footer>
     </div>
