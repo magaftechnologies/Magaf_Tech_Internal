@@ -1,6 +1,7 @@
 import { clearToken, getToken } from './tokenStorage'
 
-const configuredBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api'
+//const configuredBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api'
+const configuredBase = import.meta.env.VITE_API_BASE_URL || 'https://magaf-tech-internal.onrender.com/api'
 const API_BASE = configuredBase.replace(/\/+$/, '').replace(/\/api$/i, '') + '/api'
 const API_ORIGIN = API_BASE.slice(0, -4)
 
