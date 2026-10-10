@@ -10,13 +10,16 @@ export const projectPayments = (data, project) => data.payments.filter((payment)
   payment.projectId === project.id || (project.dealId && payment.dealId === project.dealId))
 
 export const projectPaid = (data, project) => {
+  if (project.paidAmount !== undefined) return Math.max(0, Number(project.paidAmount || 0))
   const entries = projectPayments(data, project)
   return entries.length
     ? Math.max(0, entries.reduce((sum, payment) => sum + paymentValue(payment), 0))
     : Math.max(0, Number(project.paidAmount || 0))
 }
 
-export const projectOutstanding = (data, project) => Math.max(0, Number(project.agreedAmount || 0) - projectPaid(data, project))
+export const projectOutstanding = (data, project) => project.balance !== undefined
+  ? Math.max(0, Number(project.balance || 0))
+  : Math.max(0, Number(project.agreedAmount || 0) - projectPaid(data, project))
 export const outstanding = (project) => Math.max(0, Number(project.agreedAmount || 0) - Number(project.paidAmount || 0))
 export const dealPayments = (data, deal) => data.payments.filter((payment) =>
   payment.dealId === deal.id || (deal.projectId && payment.projectId === deal.projectId))
@@ -68,6 +71,20 @@ export const studentPaid = (data, student) => {
 export const studentBalance = (data, student) => Math.max(0,Number(student.agreedAmount||0)-studentPaid(data,student))
 
 export const serviceStats = (data, serviceId) => {
+  const serverStats = data.servicePerformance?.find((item) => item.service?.id === serviceId)
+  if (serverStats) return {
+    clients: serverStats.clients || 0,
+    students: serverStats.students || 0,
+    projects: serverStats.projects || 0,
+    requests: serverStats.requests || 0,
+    revenue: serverStats.revenue || 0,
+    pending: serverStats.pending || 0,
+    completed: serverStats.completed || 0,
+    active: serverStats.active || 0,
+    leads: serverStats.leads || 0,
+    deals: data.deals.filter((deal) => deal.serviceId === serviceId).length,
+    average: 0,
+  }
   const capabilities=getServiceCapabilities(serviceId)
   const serviceProjects = data.projects.filter((project) => project.serviceId === serviceId)
   const revenue = data.payments.filter((payment) => paymentServiceId(data, payment) === serviceId).reduce((sum, payment) => sum + paymentValue(payment), 0)
@@ -113,6 +130,32 @@ export const targetMonthPrefix = (data) => {
 const isActiveClient = (client) => !['Lead', 'Lost', 'Inactive', 'Archived'].includes(client.status)
 
 export const dashboardStats = (data) => {
+  if (data.dashboardSummary) {
+    const summary = data.dashboardSummary
+    return {
+      revenue: summary.revenue?.paid || 0,
+      totalPaid: summary.revenue?.paid || 0,
+      bookedRevenue: summary.revenue?.booked || 0,
+      pending: summary.revenue?.outstanding || 0,
+      totalDealValue: summary.revenue?.booked || 0,
+      clients: summary.clients?.total || 0,
+      activeClients: summary.clients?.active || 0,
+      newLeads: summary.leads?.active || 0,
+      activeProjects: summary.projects?.active || 0,
+      projectCount: summary.projects?.total || 0,
+      completed: summary.projects?.completed || 0,
+      deals: summary.deals?.total || 0,
+      acceptedDeals: summary.deals?.accepted || 0,
+      monthRevenue: summary.revenue?.month || 0,
+      conversion: summary.leads?.total ? Math.round((summary.leads.converted || 0) / summary.leads.total * 100) : 0,
+      students: summary.mentoring?.students || 0,
+      activeStudents: summary.mentoring?.activeStudents || 0,
+      completedStudents: summary.mentoring?.completedStudents || 0,
+      mentoringRevenue: summary.mentoring?.revenue || 0,
+      totalRequests: summary.projectRequests?.total || 0,
+      newRequests: summary.projectRequests?.pending || 0,
+    }
+  }
   const revenue = data.payments.reduce((sum, payment) => sum + paymentValue(payment), 0)
   const countedProjects=data.projects.filter((project)=>getServiceCapabilities(project.serviceId).supportsProjects)
   const students=data.students.filter((student)=>(student.serviceId||'mentoring')==='mentoring')

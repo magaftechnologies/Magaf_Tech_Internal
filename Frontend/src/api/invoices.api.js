@@ -1,3 +1,1 @@
-import { createResourceApi } from './mockResource'
-
-export const invoicesApi = createResourceApi('invoices')
+export { invoicesApi } from './domain.api'

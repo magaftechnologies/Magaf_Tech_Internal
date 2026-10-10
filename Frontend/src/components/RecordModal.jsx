@@ -1,19 +1,18 @@
 import { useState } from 'react'
 import { useData } from '../context/DataContext'
-import { dealPaid, invoicePaid, paymentValue, projectPaid } from '../utils/calculations'
 import Icon from './Icon'
 
 const definitions = {
-  leads: { title:'Add lead', fields:[['name','Business name','text',true],['contact','Contact person','text',true],['phone','Phone','tel'],['email','Email','email'],['category','Business category','text'],['location','Location','text'],['source','Lead source','select',['Google Maps','Instagram','LinkedIn','WhatsApp','Email','Phone Call','Referral','Networking','Freelance Platform','Website','Other']],['serviceId','Interested service','services'],['potentialValue','Potential value (₹)','number'],['assignedTo','Assigned founder','people'],['status','Lead status','select',['New','Contacted','Interested','Meeting Scheduled','Proposal Sent','Negotiation','Follow-up']]] },
-  clients: { title:'Add client', fields:[['name','Business name','text',true],['contact','Contact person','text',true],['phone','Phone','tel'],['whatsapp','WhatsApp number','tel'],['email','Email','email'],['alternateContact','Alternate contact','text'],['category','Business category','text'],['industry','Industry','text'],['businessDescription','Business description','textarea'],['targetAudience','Target audience','text'],['businessSize','Business size','select',['Solo','Small','Medium','Enterprise']],['address','Address','text'],['city','City','text'],['state','State','text'],['country','Country','text'],['location','Location / region','text'],['website','Website','url'],['instagram','Instagram','url'],['linkedin','LinkedIn','url'],['serviceId','Primary service','services'],['source','Acquisition source','select',['Google Maps','Instagram','LinkedIn','WhatsApp','Email','Phone Call','Referral','Networking','Freelance Platform','Website','Other']],['leadDate','Lead date','date'],['firstContactDate','First contact date','date'],['lastContactDate','Last contact date','date'],['assignedTo','Assigned team member','people'],['priority','Priority','select',['Low','Medium','High']],['relationshipStatus','Relationship status','select',['New','Contacted','Qualified','Proposal Sent','Negotiation','Converted','Active','Completed','Inactive','Lost','Deal Accepted','Onboarding','Retainer','Paused','Archived']],['status','Client status','select',['Lead','Contacted','Qualified','Proposal Sent','Negotiation','Converted','Active','Completed','Inactive','Lost','Deal Accepted','Onboarding','Active Client','Project Completed','Retainer','Paused','Archived','Returning']],['notes','Internal notes','textarea']] },
-  projects: { title:'Create project', fields:[['name','Project name','text',true],['clientId','Client','clients',true],['serviceId','Service','services',true],['dealId','Related deal','deals'],['type','Project type','select',['Business Website','Landing Page','Web Application','Mobile Application','Dashboard','Portal','Booking System','Lead Generation Website','E-commerce','Custom Software','Advertisement Video','Promotional Video','Reel','Social Media Creative','AI Automation','Digital Invitation','Other']],['description','Description','textarea'],['requirements','Requirements','textarea'],['startDate','Start date','date'],['deadline','Deadline','date'],['deliveryDate','Delivery date','date'],['agreedAmount','Agreed amount (₹)','number',true],['assignedTo','Assigned founder','people'],['priority','Priority','select',['Low','Medium','High','Urgent']],['status','Status','select',['Draft','Proposal','Awaiting Client','Deal Accepted','Payment Pending','Planning','Requirement Gathering','Design','Development','In Progress','Review','Client Review','Revision','Approved','Ready for Delivery','Deployment','Delivered','Completed','On Hold','Cancelled']],['technologyStack','Technology stack','text'],['repositoryUrl','Repository URL','url'],['liveUrl','Live URL','url'],['hosting','Hosting information','text'],['domain','Domain information','text'],['notes','Internal notes','textarea']] },
-  deals: { title:'Create deal', fields:[['title','Deal / project title','text',true],['clientId','Client','clients',true],['serviceId','Service','services',true],['description','Description','textarea'],['quotedAmount','Quoted amount (₹)','number',true],['agreedAmount','Final agreed amount (₹)','number'],['discount','Discount (₹)','number'],['advanceRequired','Advance required (₹)','number'],['expectedCloseDate','Expected close date','date'],['assignedTo','Assigned founder','people'],['status','Deal status','select',['Lead','Contacted','Discussion','Requirement Gathering','Proposal Sent','Negotiation','Accepted','Rejected','Cancelled','In Progress','Completed','New','On Hold']],['notes','Internal notes','textarea']] },
-  payments: { title:'Record payment', fields:[['clientId','Client','clients'],['studentId','Mentoring student','students'],['dealId','Deal','deals'],['projectId','Project','projects'],['invoiceId','Invoice','invoices'],['amount','Amount received (₹)','number',true],['date','Payment date','date',true],['type','Payment type','select',['Advance','Partial Payment','Milestone Payment','Final Payment','Refund','Other']],['method','Payment method','select',['UPI','Bank Transfer','Cash','Other']],['reference','Transaction reference','text'],['notes','Notes','textarea']] },
+  leads: { title:'Add lead', fields:[['name','Business name','text',true],['contact','Contact person','text',true],['phone','Phone','tel'],['email','Email','email'],['category','Business category','text'],['location','Location','text'],['source','Lead source','select',['Google Maps','Instagram','LinkedIn','WhatsApp','Email','Phone Call','Referral','Networking','Freelance Platform','Website','Other']],['serviceId','Interested service','services'],['potentialValue','Potential value (₹)','number'],['assignedTo','Assigned team member','people'],['status','Lead status','select',['New','Contacted','Interested','Meeting Scheduled','Proposal Sent','Negotiation','Follow-up']]] },
+  clients: { title:'Add client', fields:[['name','Business name','text',true],['contact','Contact person','text',true],['phone','Phone','tel'],['whatsapp','WhatsApp number','tel'],['email','Email','email'],['alternateContact','Alternate contact','text'],['category','Business category','text'],['industry','Industry','text'],['businessDescription','Business description','textarea'],['targetAudience','Target audience','text'],['businessSize','Business size','select',['Solo','Small','Medium','Enterprise']],['address','Address','text'],['city','City','text'],['state','State','text'],['country','Country','text'],['location','Location / region','text'],['website','Website','url'],['instagram','Instagram','url'],['linkedin','LinkedIn','url'],['serviceId','Primary service','services'],['source','Acquisition source','select',['Google Maps','Instagram','LinkedIn','WhatsApp','Email','Phone Call','Referral','Networking','Freelance Platform','Website','Other']],['assignedTo','Assigned team member','people'],['status','Client status','select',['Lead','Contacted','Qualified','Proposal Sent','Negotiation','Active','Inactive','Completed','Lost']],['createPortalAccount','Create client portal account?','select',['No','Yes']],['portalPassword','Temporary portal password','password'],['portalPasswordConfirm','Confirm temporary password','password'],['notes','Internal notes','textarea']] },
+  projects: { title:'Create project', fields:[['name','Project name','text',true],['clientId','Client','clients',true],['serviceId','Service','services',true],['dealId','Related deal','deals'],['type','Project type','select',['Business Website','Landing Page','Web Application','Mobile Application','Dashboard','Portal','Booking System','Lead Generation Website','E-commerce','Custom Software','Advertisement Video','Promotional Video','Reel','Social Media Creative','AI Automation','Digital Invitation','Other']],['description','Description','textarea'],['requirements','Requirements','textarea'],['startDate','Start date','date'],['deadline','Deadline','date'],['deliveryDate','Delivery date','date'],['agreedAmount','Agreed amount (₹)','number',true],['assignedTo','Assigned team member','people'],['priority','Priority','select',['Low','Medium','High','Urgent']],['status','Status','select',['Draft','Proposal','Awaiting Client','Deal Accepted','Payment Pending','Planning','Requirement Gathering','Design','Development','In Progress','Review','Client Review','Revision','Approved','Ready for Delivery','Deployment','Delivered','Completed','On Hold','Cancelled']],['technologyStack','Technology stack','text'],['repositoryUrl','Repository URL','url'],['liveUrl','Live URL','url'],['hosting','Hosting information','text'],['domain','Domain information','text'],['notes','Internal notes','textarea']] },
+  deals: { title:'Create deal', fields:[['title','Deal / project title','text',true],['clientId','Client','clients',true],['serviceId','Service','services',true],['description','Description','textarea'],['quotedAmount','Quoted amount (₹)','number',true],['agreedAmount','Final agreed amount (₹)','number'],['discount','Discount (₹)','number'],['advanceRequired','Advance required (₹)','number'],['expectedCloseDate','Expected close date','date'],['assignedTo','Assigned team member','people'],['status','Deal status','select',['Lead','Contacted','Discussion','Requirement Gathering','Proposal Sent','Negotiation','Accepted','Rejected','Cancelled','In Progress','Completed','New','On Hold']],['notes','Internal notes','textarea']] },
+  payments: { title:'Record payment', fields:[['clientId','Client','clients'],['studentId','Mentoring student','students'],['dealId','Deal','deals'],['projectId','Project','projects'],['invoiceId','Invoice','invoices'],['amount','Amount received (₹)','number',true],['date','Payment date','date',true],['type','Payment type','select',['Advance','Partial Payment','Milestone Payment','Final Payment','Refund','Other']],['method','Payment method','select',['UPI','Bank Transfer','Cash','Card','Online','Other']],['reference','Transaction reference','text'],['notes','Notes','textarea']] },
   invoices: { title:'Create invoice record', fields:[['invoiceNumber','Invoice number','text',true],['clientId','Client','clients',true],['dealId','Deal','deals'],['projectId','Project','projects'],['amount','Invoice amount (₹)','number',true],['issueDate','Issue date','date',true],['dueDate','Due date','date'],['paymentStatus','Payment status','select',['Not Paid','Partially Paid','Fully Paid','Payment Pending','Overdue']],['notes','Notes','textarea']] },
-  tasks: { title:'Add task', fields:[['title','Task','text',true],['description','Description','textarea'],['clientId','Client','clients'],['projectId','Project','projects'],['assignedTo','Assigned to','people'],['priority','Priority','select',['Low','Medium','High','Urgent']],['status','Status','select',['Todo','In Progress','Review','Completed','Blocked']],['deadline','Deadline','date'],['clientVisible','Visible in client portal','select',['No','Yes']]] },
+  tasks: { title:'Add task', fields:[['title','Task','text',true],['description','Description','textarea'],['projectId','Project','projects',true],['assignedTo','Assigned to','people'],['priority','Priority','select',['Low','Medium','High','Urgent']],['status','Status','select',['Todo','In Progress','Review','Completed']],['deadline','Deadline','date']] },
   assets: { title:'Add creative asset', fields:[['name','Asset name','text',true],['type','Asset type','select',['Reference image','Client logo','Product image','Video','Prompt','Draft','Final output','Other']],['clientId','Client','clients'],['projectId','Project','projects'],['version','Version','text'],['prompt','Prompt / brief','textarea'],['url','Output or source URL','url'],['status','Status','select',['Input','Generating','Draft','Revision','Approved','Final','Delivered']],['notes','Notes','textarea']] },
   files: { title:'Add project file or link', fields:[['name','Name / file label','text',true],['category','File category','select',['Input','Reference','Working','Output','Final','Client Provided','Other']],['clientId','Client','clients'],['projectId','Project','projects'],['linkProvider','External link provider','select',['Google Drive','Dropbox','GitHub','Live Website','YouTube','Other']],['url','External / Drive / live URL','url'],['description','Description','textarea'],['version','Version','text'],['status','File / approval status','select',['Draft','Pending Approval','Approved','Changes Requested','Final','Delivered']],['visibility','Visibility','select',['Internal','Client']],['uploadedBy','Uploaded by','select',['MAGAF Team','Client']]] },
-  content: { title:'Add content deliverable', fields:[['name','Content / campaign name','text',true],['clientId','Client','clients'],['projectId','Project','projects'],['serviceId','Service','services'],['platform','Platform','text'],['contentType','Content type','text'],['topic','Topic','text'],['status','Status','select',['Idea','Script','Production','Review','Client Approval','Scheduled','Published','Completed']],['scheduledDate','Scheduled date','date'],['url','Deliverable URL','url']] },
+  content: { title:'Add content deliverable', fields:[['projectId','Project','projects',true],['platform','Platform','text'],['contentType','Content type','text'],['topic','Topic','text'],['status','Status','select',['Idea','Script','Production','Review','Client Approval','Scheduled','Published','Completed']],['scheduledDate','Scheduled date','date'],['url','Deliverable URL','url']] },
   products: { title:'Add MAGAF product', fields:[['name','Product name','text',true],['description','Description','textarea'],['problem','Problem to solve','textarea'],['target','Target audience','text'],['stage','Product stage','select',['Idea','Validation','Prototype','MVP','Beta','Launched','Paused','Retired']],['users','Users','number'],['revenue','Revenue (₹)','number'],['technology','Technology','text'],['repository','Repository URL','url'],['url','Product URL','url'],['roadmap','Roadmap','textarea'],['priority','Priority','select',['Low','Medium','High']],['notes','Notes','textarea']] },
   students: { title:'Add mentoring learner', fields:[['name','Student name','text',true],['contact','Phone','tel'],['email','Email','email'],['college','College','text'],['degree','Degree','text'],['branch','Branch','text'],['year','Year of study','text'],['goal','Course / learning goal','text'],['level','Current level','select',['Beginner','Intermediate','Advanced']],['topics','Topics / subjects','text'],['enrollmentDate','Enrollment date','date'],['sessionType','Session type','select',['1:1','Group','Project guidance']],['sessionDate','Next session date','date'],['sessionDuration','Session duration','text'],['agreedAmount','Total agreed fee (₹)','number'],['sessionsCompleted','Sessions completed','number'],['sessionsRemaining','Sessions remaining','number'],['mentor','Assigned mentor','people'],['status','Status','select',['New','Active','Paused','Completed']],['progress','Progress notes','textarea'],['notes','Notes','textarea']] },
   team: { title:'Add team member', fields:[['name','Name','text',true],['role','Role / focus','text'],['email','Email','email'],['phone','Phone','tel'],['status','Status','select',['Active','Inactive']],['skills','Skills','text']] },
@@ -30,15 +29,16 @@ const projectServiceFields = {
   mentoring:[['studentName','Student / learner'],['courseTopic','Course / topic'],['learningPlan','Learning plan','textarea'],['sessionCount','Session count','number'],['sessionDuration','Session duration'],['scheduledSessions','Scheduled sessions','textarea'],['assignments','Assignments / resources','textarea'],['progressNotes','Progress notes','textarea']],
 }
 
-export default function RecordModal({ type, onClose, initial = {}, recordId }) {
-  const { data, addLead, addClient, addProject, addPayment, addTask, addAsset, addFile, addDeal, addInvoice, addCommunication, addGeneric, patch } = useData()
-  const [values, setValues] = useState(initial)
+export default function RecordModal({ type, onClose, onSaved, initial = {}, recordId }) {
+  const { data, error:apiError, addLead, addClient, addProject, addPayment, addTask, addAsset, addFile, addDeal, addInvoice, addCommunication, addGeneric, patch } = useData()
+  const [values, setValues] = useState(()=>({ ...(type==='clients'?{createPortalAccount:'No',status:'Active'}:{}), ...initial }))
   const [error, setError] = useState('')
   const [selectedFiles,setSelectedFiles]=useState([])
   const [saving,setSaving]=useState(false)
   const definition = definitions[type]
   const serviceId = values.serviceId || initial.serviceId
-  const serviceFields = type==='projects'?projectServiceFields[serviceId]||[]:[]
+  const serviceKey=data.services.find((service)=>service.id===serviceId)?.legacyKey
+  const serviceFields = type==='projects'?projectServiceFields[serviceKey]||[]:[]
   if (!definition) return null
   const submit = async (event) => {
     event.preventDefault()
@@ -53,34 +53,28 @@ export default function RecordModal({ type, onClose, initial = {}, recordId }) {
     if(type==='payments'&&!values.projectId&&!values.dealId&&!values.studentId&&!paymentInvoice){setError('Choose a project, deal, invoice or mentoring student for this payment.');return}
     if(type==='payments'&&!values.clientId&&!paymentInvoice&&!paymentProject&&!paymentDeal&&!paymentStudent){setError('Choose a client or mentoring student for this payment.');return}
     if(type==='payments'&&Number(values.amount)<=0){setError('Enter an amount greater than zero.');return}
-    if (type === 'payments' && paymentStudent) {
-      const studentPayments=data.payments.filter((payment)=>payment.studentId===paymentStudent.id)
-      const paid=studentPayments.length?studentPayments.reduce((sum,payment)=>sum+paymentValue(payment),0):Number(paymentStudent.paidAmount||0)
-      const balance=Math.max(0,Number(paymentStudent.agreedAmount||0)-paid)
-      if(values.type==='Refund'&&Number(values.amount)>paid){setError(`Refund exceeds the amount paid of ₹${paid.toLocaleString('en-IN')}.`);return}
-      if(values.type!=='Refund'&&Number(values.amount)>balance){setError(`Payment exceeds the remaining mentoring balance of ₹${balance.toLocaleString('en-IN')}.`);return}
-    } else if (type === 'payments' && (values.projectId||values.dealId)) {
-      const project = paymentProject
-      const deal=paymentDeal
-      const relevantProject=project||data.projects.find((item)=>item.id===deal?.projectId)
-      const relevantDeal=deal||data.deals.find((item)=>item.id===relevantProject?.dealId)
-      if(project&&deal&&deal.projectId&&deal.projectId!==project.id){setError('The selected deal does not belong to the selected project.');return}
-      const paid=paymentInvoice?invoicePaid(data,paymentInvoice):relevantProject?projectPaid(data,relevantProject):relevantDeal?dealPaid(data,relevantDeal):0
-      if(values.type==='Refund'&&Number(values.amount)>paid){setError(`Refund exceeds the amount paid of ₹${paid.toLocaleString('en-IN')}.`);return}
-      if (values.type!=='Refund') {
-        const balance = Math.max(0, Number(paymentInvoice?.amount||relevantProject?.agreedAmount||relevantDeal?.agreedAmount||relevantDeal?.quotedAmount||0)-paid)
-        if (Number(values.amount) > balance) { setError(`Payment exceeds the remaining project balance of ₹${balance.toLocaleString('en-IN')}.`); return }
-      }
+    if(type==='payments'&&!recordId&&values.method!=='Cash'&&!selectedFiles.length){setError('Attach payment receipt proof for non-cash payments.');return}
+    if(type==='files'&&selectedFiles.length>10){setError('Choose up to 10 files per upload.');return}
+    if(type==='payments'&&selectedFiles.length>5){setError('Choose up to 5 payment proof files.');return}
+    if(type==='files'&&!selectedFiles.length&&!values.url){setError('Choose files or add a secure HTTPS link.');return}
+    if(type==='clients'&&values.createPortalAccount==='Yes'){
+      if(!values.email){setError('An email address is required for the client portal account.');return}
+      if(!values.portalPassword||values.portalPassword.length<10){setError('Set a temporary portal password of at least 10 characters.');return}
+      if(values.portalPassword!==values.portalPasswordConfirm){setError('The temporary passwords do not match.');return}
     }
-    if(type==='files'&&selectedFiles.length>5){setError('Choose up to 5 files per upload.');return}
-    if(type==='files'&&selectedFiles.some((file)=>file.size>1_500_000)){setError('Each file must be 1.5 MB or smaller in this local demo. Use a Drive link for larger files.');return}
     const payload = { ...values }
     if (type === 'projects' || type === 'payments' || type === 'deals' || type === 'invoices' || type === 'products' || type === 'students' || type==='mentoringSessions') ['agreedAmount','paidAmount','amount','quotedAmount','discount','advanceRequired','estimatedMonthlyCost','revisionCount','sessionCount','sessionFee','sessionsCompleted','sessionsRemaining','durationMinutes','users','revenue'].forEach((key) => { if (payload[key] !== undefined && payload[key] !== '') payload[key] = Number(payload[key]) })
     if(type==='projects'&&serviceFields.length)payload.serviceDetails={...(initial.serviceDetails||{}),...Object.fromEntries(serviceFields.map(([key])=>[key,payload[key]]))}
-    if(type==='tasks')payload.clientVisible=payload.clientVisible==='Yes'
-    if(recordId) {
-      patch(type==='team'?'users':type,recordId,payload)
-    } else if (type === 'invoices') {
+    setSaving(true)
+    setError('')
+    try {
+      let result
+      if(recordId) {
+        result=await patch(type==='team'?'users':type,recordId,payload)
+      } else if(type==='clients') {
+        payload.createPortalAccount=payload.createPortalAccount==='Yes'
+        result=await addClient(payload)
+      } else if(type === 'invoices') {
       const project=data.projects.find(item=>item.id===payload.projectId)
       const deal=data.deals.find(item=>item.id===payload.dealId)
       if(project&&deal&&deal.projectId&&deal.projectId!==project.id){setError('The selected deal is not connected to that project.');return}
@@ -88,47 +82,67 @@ export default function RecordModal({ type, onClose, initial = {}, recordId }) {
       payload.projectId=payload.projectId||deal?.projectId
       payload.dealId=payload.dealId||project?.dealId
       payload.paymentStatus=payload.paymentStatus||'Payment Pending'
-      addInvoice(payload)
-    } else if (type === 'payments') {
+      result=await addInvoice(payload)
+      } else if (type === 'payments') {
       const project = paymentProject
       const deal=paymentDeal
       const student=paymentStudent
       payload.clientId=payload.clientId||paymentInvoice?.clientId||project?.clientId||deal?.clientId
       payload.serviceId = student?.serviceId || project?.serviceId || deal?.serviceId || data.clients.find((item) => item.id === payload.clientId)?.serviceId
       payload.projectId=payload.projectId||paymentInvoice?.projectId||deal?.projectId
-      payload.dealId=payload.dealId||paymentInvoice?.dealId||project?.dealId
+      payload.dealId=payload.dealId||paymentInvoice?.dealId
       if(!payload.projectId&&deal?.projectId)payload.projectId=deal.projectId
-      if(!payload.dealId&&project?.dealId)payload.dealId=project.dealId
       if(payload.type==='Refund')payload.status='Refunded'
-      try { addPayment(payload) }
-      catch (paymentError) { setError(paymentError.message); return }
-    } else if(type==='files') {
-      setSaving(true)
-      try {
-        const records=await Promise.all(selectedFiles.map(async(file)=>({name:file.name,type:file.type||'File',size:file.size,category:payload.category,clientId:payload.clientId,projectId:payload.projectId,linkProvider:payload.linkProvider,url:payload.url,description:payload.description,version:payload.version||'1',status:payload.status||'Draft',visibility:payload.visibility||'Internal',uploadedBy:payload.uploadedBy||'MAGAF Team',uploadedAt:new Date().toISOString().slice(0,10),fileData:file.size?await readFile(file):undefined})))
-        if(records.length) records.forEach(addFile)
-        else addFile(payload)
-      } catch(readError) {
-        console.error('Unable to read selected file.',readError)
-        setError('The selected file could not be read. Try another file or add an external link.')
-        setSaving(false)
-        return
+      const proofFiles=[]
+      for(const file of selectedFiles){
+        const uploaded=await addFile({
+          name:file.name,
+          rawFile:file,
+          category:'payment_proof',
+          clientId:payload.clientId,
+          projectId:payload.projectId,
+          visibility:'Internal',
+          description:`Payment proof for ${payload.projectId ? data.projects.find((item)=>item.id===payload.projectId)?.name || 'project' : 'client payment'}`,
+        },{throwOnError:true})
+        if(!uploaded)throw new Error(apiError||'Payment proof could not be uploaded.')
+        proofFiles.push(uploaded.id)
       }
-    } else if (type === 'leads') addLead(payload)
-    else if (type === 'clients') addClient(payload)
-    else if (type === 'projects') addProject(payload)
-    else if (type === 'tasks') addTask(payload)
-    else if (type === 'assets') addAsset(payload)
-    else if (type === 'deals') addDeal(payload)
-    else if(type==='communications')addCommunication(payload)
-    else addGeneric(type === 'team' ? 'users' : type, payload)
-    onClose()
+      payload.proofFiles=proofFiles
+      result=await addPayment(payload)
+      } else if(type==='files') {
+        const records=[]
+        for(const file of selectedFiles){
+          const record=await addFile({name:file.name,rawFile:file,category:payload.category,clientId:payload.clientId,projectId:payload.projectId,description:payload.description,visibility:payload.visibility||'Internal'})
+          if(!record)throw new Error(apiError||'File upload failed. Check the backend and Cloudinary configuration.')
+          records.push(record)
+        }
+        if(payload.url){
+          const record=await addFile({name:payload.name||'Shared link',url:payload.url,category:payload.category,clientId:payload.clientId,projectId:payload.projectId,description:payload.description,visibility:payload.visibility||'Internal'})
+          if(!record)throw new Error(apiError||'The external link could not be saved.')
+          records.push(record)
+        }
+        result=records[0]
+      } else if (type === 'leads') result=await addLead(payload)
+      else if (type === 'projects') result=await addProject(payload)
+      else if (type === 'tasks') result=await addTask(payload)
+      else if (type === 'assets') result=await addAsset(payload)
+      else if (type === 'deals') result=await addDeal(payload)
+      else if(type==='communications')result=await addCommunication(payload)
+      else result=await addGeneric(type === 'team' ? 'users' : type, payload)
+      if(!result){setError(apiError||'The record could not be saved.');return}
+      onSaved?.(result,type)
+      onClose()
+    } catch(saveError) {
+      setError(saveError.message||apiError||'The record could not be saved.')
+    } finally {
+      setSaving(false)
+    }
   }
-  const options = (kind) => kind === 'services' ? data.services.filter((item)=>!['projects','deals'].includes(type)||item.supportsProjects!==false||recordId&&item.id===initial.serviceId).map((item) => [item.id,item.shortName || item.name]) : kind === 'clients' ? data.clients.map((item) => [item.id,item.name]) : kind === 'students' ? data.students.map((item)=>[item.id,item.name]) : kind === 'projects' ? data.projects.filter((item) => !values.clientId || item.clientId === values.clientId).map((item) => [item.id,item.name]) : kind==='deals'?data.deals.filter((item)=>!values.clientId||item.clientId===values.clientId).map((item)=>[item.id,item.title]):kind==='invoices'?data.invoices.filter((item)=>!values.clientId||item.clientId===values.clientId).map((item)=>[item.id,item.invoiceNumber||item.id]):data.users.map((item) => [item.name,item.name])
+  const options = (kind) => kind === 'services' ? data.services.filter((item)=>!['projects','deals'].includes(type)||item.supportsProjects!==false||recordId&&item.id===initial.serviceId).map((item) => [item.id,item.shortName || item.name]) : kind === 'clients' ? data.clients.map((item)=>[item.id,item.name]) : kind === 'students' ? data.students.map((item)=>[item.id,item.name]) : kind === 'projects' ? data.projects.filter((item)=>!values.clientId||item.clientId===values.clientId).map((item)=>[item.id,item.name]) : kind==='deals'?data.deals.filter((item)=>!values.clientId||item.clientId===values.clientId).map((item)=>[item.id,item.title]):kind==='invoices'?data.invoices.filter((item)=>!values.clientId||item.clientId===values.clientId).map((item)=>[item.id,item.invoiceNumber||item.id]):(data.teamMembers||[]).map((item)=>[item.id,item.name])
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div className="modal-head"><div><span className="eyebrow">MAGAF WORKSPACE</span><h2 id="modal-title">{recordId?`Edit ${definition.title.replace(/^Add |^Create /,'')}`:definition.title}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close dialog">×</button></div>
-      <form onSubmit={submit}><div className="form-grid">{definition.fields.map((field) => <ModalField key={field[0]} field={field} values={values} setValues={setValues} options={options}/>)}{serviceFields.length>0&&<div className="service-form-divider">{data.services.find(item=>item.id===serviceId)?.shortName} project details</div>}{serviceFields.map((field)=> <ModalField key={field[0]} field={field} values={values} setValues={setValues} options={options}/>)}{type==='files'&&<label className="field full file-picker">Upload multiple files<input type="file" multiple onChange={(event)=>setSelectedFiles(Array.from(event.target.files||[]))}/><small>Up to 5 files · 1.5 MB per file · Large files can be added as Drive or external links.</small>{selectedFiles.length>0&&<span className="selected-files">{selectedFiles.map((file)=>file.name).join(' · ')}</span>}</label>}</div>{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={saving}><Icon name="plus" size={16}/>{saving?'Saving files…':'Save record'}</button></div></form>
+      <form onSubmit={submit}><div className="form-grid">{definition.fields.filter(([name])=>type!=='clients'||!['portalPassword','portalPasswordConfirm'].includes(name)||values.createPortalAccount==='Yes').map((field) => <ModalField key={field[0]} field={field} values={values} setValues={setValues} options={options}/>)}{serviceFields.length>0&&<div className="service-form-divider">{data.services.find(item=>item.id===serviceId)?.shortName} project details</div>}{serviceFields.map((field)=> <ModalField key={field[0]} field={field} values={values} setValues={setValues} options={options}/>)}{type==='files'&&<label className="field full file-picker">Upload multiple files<input type="file" multiple accept="image/*,application/pdf,application/zip,.zip,.doc,.docx,.txt,video/*,audio/*" onChange={(event)=>setSelectedFiles(Array.from(event.target.files||[]))}/><small>Up to 10 files per upload, including ZIP archives. File size and type are validated by the MAGAF API.</small>{selectedFiles.length>0&&<span className="selected-files">{selectedFiles.map((file)=>file.name).join(' · ')}</span>}</label>      }{type==='payments'&&<label className="field full file-picker">Payment proof / receipt{values.method!=='Cash'&&!recordId&&<span className="required"> *</span>}<input type="file" multiple required={!recordId&&values.method!=='Cash'} accept="image/*,application/pdf,.doc,.docx,.txt" onChange={(event)=>setSelectedFiles(Array.from(event.target.files||[]).slice(0,5))}/><small>{values.method==='Cash'?'Cash payments do not need a receipt and require approval by another team member.':'Attach the receipt for this payment. It will be recorded as paid without a separate verification step. Up to 5 files.'}</small>{selectedFiles.length>0&&<span className="selected-files">{selectedFiles.map((file)=>file.name).join(' · ')}</span>}</label>}</div>{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={saving}><Icon name="plus" size={16}/>{saving?'Saving…':'Save record'}</button></div></form>
     </section>
   </div>
 }
@@ -138,4 +152,3 @@ function ModalField({field,values,setValues,options}){
   const selectChoices=Array.isArray(requiredOrChoices)?requiredOrChoices:choices
   return <label className={kind==='textarea'?'field full':'field'}>{label}{required&&<span className="required"> *</span>}{kind==='select'||['services','clients','projects','people','deals','invoices','students'].includes(kind)?<select required={required} value={values[name]||''} onChange={(event)=>setValues({...values,[name]:event.target.value})}><option value="">Select {label.toLowerCase()}</option>{(selectChoices||options(kind)).map((option)=><option key={Array.isArray(option)?option[0]:option} value={Array.isArray(option)?option[0]:option}>{Array.isArray(option)?option[1]:option}</option>)}</select>:kind==='textarea'?<textarea rows="3" value={values[name]||''} onChange={(event)=>setValues({...values,[name]:event.target.value})} placeholder={`Add ${label.toLowerCase()}…`}/>:<input type={kind||'text'} required={required} min={kind==='number'?0:undefined} value={values[name]??''} onChange={(event)=>setValues({...values,[name]:event.target.value})} placeholder={kind==='number'?'0':''}/>}</label>
 }
-const readFile=(file)=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(reader.error||new Error('File read failed'));reader.readAsDataURL(file)})

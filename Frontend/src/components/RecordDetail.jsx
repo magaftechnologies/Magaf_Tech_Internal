@@ -1,11 +1,19 @@
+import { useEffect, useState } from 'react'
 import { useData } from '../context/DataContext'
+import { useAuth } from '../context/AuthContext'
 import { currency, dealBalance, dealPaid, projectOutstanding, projectPaid, clientOutstanding, clientPaid, clientProjects, serviceStats } from '../utils/calculations'
 import Icon from './Icon'
 
-export default function RecordDetail({ type, id, navigate, quickAdd }) {
-  const { data, patch, convertLead, updateDealStatus, setDeliverableStatus, completeMilestone } = useData()
+export default function RecordDetail({ type, id, navigate, quickAdd, focusPaymentId, autoOpenDistribution }) {
+  const { data, patch, convertLead, updateDealStatus, setDeliverableStatus, completeMilestone, saveDistributionRules, finalizeProjectDistribution, updateDistribution, reverseDistribution, reviewPayment, approveCashPayment } = useData()
+  const { user } = useAuth()
   const collection = type === 'services' ? 'services' : type
   const record = data[collection]?.find((item) => item.id === id)
+  useEffect(() => {
+    if (type !== 'projects' || !focusPaymentId) return undefined
+    const timer = window.setTimeout(() => document.getElementById(`payment-${focusPaymentId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 0)
+    return () => window.clearTimeout(timer)
+  }, [type, id, focusPaymentId, data.payments])
   if (!record) return <div className="page-stack"><button className="back-link" onClick={()=>navigate(type)}><Icon name="chevron" size={15}/> Back to {type}</button><section className="panel empty-state"><h2>Record not found</h2><p>This record may have been removed or reset.</p></section></div>
   if (type === 'services') {
     const stats=serviceStats(data,id)
@@ -31,9 +39,20 @@ export default function RecordDetail({ type, id, navigate, quickAdd }) {
   if (type === 'projects') {
     const client=data.clients.find(c=>c.id===record.clientId)
     const service=data.services.find(s=>s.id===record.serviceId)
-    const payments=data.payments.filter(p=>p.projectId===id||p.dealId===record.dealId)
-    const paid=projectPaid(data,record)
-    return <div className="page-stack"><button className="back-link" onClick={()=>navigate('projects')}><Icon name="chevron" size={15}/> All projects</button><section className="detail-hero panel"><span className="service-card-icon"><Icon name={service?.icon||'briefcase'} size={21}/></span><div className="detail-hero-copy"><div className="eyebrow">PROJECT · {record.id.toUpperCase()}</div><h1>{record.name}</h1><p><button className="inline-link" onClick={()=>client&&navigate(`clients/${client.id}`)}>{client?.name||'No client'}</button> · {service?.shortName}</p><Status>{record.status}</Status></div><button className="button button-primary" onClick={()=>quickAdd('payments',{clientId:record.clientId,projectId:id})}><Icon name="card" size={15}/> Record payment</button></section><div className="summary-strip"><Summary label="Agreed amount" value={currency(record.agreedAmount)}/><Summary label="Paid to date" value={currency(paid)}/><Summary label="Balance due" value={currency(projectOutstanding(data,record))}/><Summary label="Payment status" value={record.paymentStatus|| (paid>=Number(record.agreedAmount||0)&&paid>0?'Paid':paid?'Partially Paid':'Pending')}/></div><div className="dashboard-grid"><section className="panel"><div className="panel-heading"><div><span className="eyebrow">DELIVERY DETAILS</span><h2>Project overview</h2></div></div><Info label="Client" value={client?.name}/><Info label="Service" value={service?.shortName}/><Info label="Project type" value={record.type}/><Info label="Owner" value={record.assignedTo}/><Info label="Priority" value={record.priority}/><Info label="Start date" value={record.startDate}/><Info label="Deadline" value={record.deadline}/><Info label="Delivery date" value={record.deliveryDate}/><Info label="Technology stack" value={record.technologyStack}/><Info label="Repository" value={record.repositoryUrl&&<a href={record.repositoryUrl} target="_blank" rel="noreferrer">{record.repositoryUrl}</a>}/><Info label="Live URL" value={record.liveUrl&&<a href={record.liveUrl} target="_blank" rel="noreferrer">{record.liveUrl}</a>}/><Info label="Hosting / domain" value={[record.hosting,record.domain].filter(Boolean).join(' · ')}/><Info label="Development support" value={record.support||'Internal'}/><p className="detail-note">{record.description||'No project description added yet.'}</p><div className="field detail-status"><label>Project status</label><select value={record.status} onChange={e=>patch('projects',id,{status:e.target.value})}>{['Draft','Proposal','Awaiting Client','Deal Accepted','Payment Pending','Planning','Requirement Gathering','Design','Development','In Progress','Review','Client Review','Revision','Approved','Ready for Delivery','Deployment','Delivered','Completed','On Hold','Cancelled',record.status].filter((s,index,arr)=>arr.indexOf(s)===index).map(s=><option key={s}>{s}</option>)}</select></div></section><section className="panel"><div className="panel-heading"><div><span className="eyebrow">PROJECT FINANCIALS</span><h2>Payments</h2></div></div><PaymentTable payments={payments} data={data}/>{!payments.length&&<Empty text="No payments recorded for this project yet."/>}</section></div>    {record.serviceId==='creative'&&<CreativeAssets id={id} clientId={record.clientId} quickAdd={quickAdd} data={data}/>}<ProjectCollaboration project={record} data={data} quickAdd={quickAdd} completeMilestone={completeMilestone} setDeliverableStatus={setDeliverableStatus} patch={patch}/></div>
+    const payments=data.payments.filter(p=>p.projectId===id||(record.dealId&&p.dealId===record.dealId))
+    const paid=Number(record.paidAmount||0)
+    const distribution=(data.revenueDistributions||[]).find((entry)=>(entry.projectId?.id||entry.projectId?._id||entry.projectId)===id&&entry.entryType==='receipt'&&entry.status==='finalized')
+    const backendPaid=Number(record.paidAmount??paid)
+    const amountDue=Number(record.agreedAmount||record.finalAmount||record.quotedAmount||record.budget||0)
+    const isFullyPaid=record.paymentStatus==='Paid'||(amountDue>0&&Number(record.balanceAmount)===0&&backendPaid>=amountDue)
+    return <div className="page-stack">
+      <button className="back-link" onClick={()=>navigate('projects')}><Icon name="chevron" size={15}/> All projects</button>
+      <section className="detail-hero panel"><span className="service-card-icon"><Icon name={service?.icon||'briefcase'} size={21}/></span><div className="detail-hero-copy"><div className="eyebrow">PROJECT · {record.id.toUpperCase()}</div><h1>{record.name}</h1><p><button className="inline-link" onClick={()=>client&&navigate(`clients/${client.id}`)}>{client?.name||'No client'}</button> · {service?.shortName}</p><Status>{record.status}</Status></div><button className="button button-primary" onClick={()=>quickAdd('payments',{clientId:record.clientId,projectId:id})}><Icon name="card" size={15}/> Record payment</button></section>
+      <div className="summary-strip"><Summary label="Agreed amount" value={currency(amountDue)}/><Summary label="Verified paid" value={currency(backendPaid)}/><Summary label="Remaining" value={currency(record.balanceAmount??projectOutstanding(data,record))}/><Summary label="Payment status" value={record.paymentStatus||'Unpaid'}/></div>
+      <div className="dashboard-grid"><section className="panel"><div className="panel-heading"><div><span className="eyebrow">DELIVERY DETAILS</span><h2>Project overview</h2></div></div><Info label="Client" value={client?.name}/><Info label="Service" value={service?.shortName}/><Info label="Project type" value={record.type}/><Info label="Owner" value={record.assignedTo}/><Info label="Priority" value={record.priority}/><Info label="Start date" value={record.startDate}/><Info label="Deadline" value={record.deadline}/><Info label="Delivery date" value={record.deliveryDate}/><Info label="Technology stack" value={record.technologyStack}/><Info label="Repository" value={record.repositoryUrl&&<a href={record.repositoryUrl} target="_blank" rel="noreferrer">{record.repositoryUrl}</a>}/><Info label="Live URL" value={record.liveUrl&&<a href={record.liveUrl} target="_blank" rel="noreferrer">{record.liveUrl}</a>}/><Info label="Hosting / domain" value={[record.hosting,record.domain].filter(Boolean).join(' · ')}/><Info label="Development support" value={record.support||'Internal'}/><p className="detail-note">{record.description||'No project description added yet.'}</p><div className="field detail-status"><label>Project status</label><select value={record.status} onChange={e=>patch('projects',id,{status:e.target.value})}>{['Draft','Proposal','Awaiting Client','Deal Accepted','Payment Pending','Planning','Requirement Gathering','Design','Development','In Progress','Review','Client Review','Revision','Approved','Ready for Delivery','Deployment','Delivered','Completed','On Hold','Cancelled',record.status].filter((s,index,arr)=>arr.indexOf(s)===index).map(s=><option key={s}>{s}</option>)}</select></div></section><section className="panel" id="project-payments"><div className="panel-heading"><div><span className="eyebrow">PROJECT FINANCIALS</span><h2>Payments</h2></div><button className="button button-outline button-small" onClick={()=>quickAdd('payments',{clientId:record.clientId,projectId:id,dealId:record.dealId})}><Icon name="plus" size={14}/> Add payment</button></div><div className="project-payment-totals"><Info label="Project / deal amount" value={currency(amountDue)}/><Info label="Verified payments" value={currency(backendPaid)}/><Info label="Outstanding" value={currency(record.balanceAmount??projectOutstanding(data,record))}/><Info label="Payment state" value={record.paymentStatus||'Unpaid'}/></div><PaymentTable payments={payments} user={user} focusPaymentId={focusPaymentId} reviewPayment={reviewPayment} approveCashPayment={approveCashPayment} navigate={navigate}/>{!payments.length&&<Empty text="No payments recorded for this project yet."/>}</section></div>
+      <ProjectRevenueDistribution key={distributionRulesKey(record)} project={record} distribution={distribution} isFullyPaid={isFullyPaid} data={data} canConfigure={['super_admin','admin'].includes(user?.role)} saveRules={saveDistributionRules} finalize={finalizeProjectDistribution} updateDistribution={updateDistribution} reverseDistribution={reverseDistribution} autoOpen={autoOpenDistribution}/>
+      {record.serviceId==='creative'&&<CreativeAssets id={id} clientId={record.clientId} quickAdd={quickAdd} data={data}/>}<ProjectCollaboration project={record} data={data} quickAdd={quickAdd} completeMilestone={completeMilestone} setDeliverableStatus={setDeliverableStatus} patch={patch}/>
+    </div>
   }
   if(type==='deals'){
     const client=data.clients.find(item=>item.id===record.clientId)
@@ -52,7 +71,113 @@ function Info({label,value}){return <div className="info-row"><span>{label}</spa
 function Status({children}){return <span className={`status-pill ${String(children).toLowerCase().replaceAll(' ','-')}`}>{children}</span>}
 function Empty({text}){return <div className="detail-empty">{text}</div>}
 function ProjectTable({projects,data,navigate}){return projects.length?<div className="table-scroll"><table><thead><tr><th>Project</th><th>Service</th><th>Status</th><th>Agreed</th><th>Paid</th><th>Balance</th></tr></thead><tbody>{projects.map(p=><tr className="clickable-row" key={p.id} onClick={()=>navigate(`projects/${p.id}`)}><td>{p.name}</td><td>{data.services.find(s=>s.id===p.serviceId)?.shortName}</td><td><Status>{p.status}</Status></td><td>{currency(p.agreedAmount)}</td><td>{currency(projectPaid(data,p))}</td><td>{currency(projectOutstanding(data,p))}</td></tr>)}</tbody></table></div>:null}
-function PaymentTable({payments,data}){return payments.length?<div className="table-scroll"><table><thead><tr><th>Payment</th><th>Project</th><th>Date</th><th>Method</th><th>Amount</th></tr></thead><tbody>{payments.map(p=><tr key={p.id}><td className="ref-id">{p.reference||p.id.toUpperCase()}</td><td>{data.projects.find(x=>x.id===p.projectId)?.name||'—'}</td><td>{p.date}</td><td>{p.method}</td><td>{currency(p.amount)}</td></tr>)}</tbody></table></div>:null}
+function PaymentTable({payments,user,focusPaymentId,reviewPayment,approveCashPayment,navigate}){
+ const [busyId,setBusyId]=useState('')
+ const review=async(payment,action)=>{
+  const note=action==='verify'?'':window.prompt(action==='reject'?'Reason for rejection':'What should the client correct?')
+  if(note===null||(action!=='verify'&&!note.trim()))return
+  setBusyId(payment.id)
+  try{
+   const updated=await reviewPayment(payment.id,{action,...(note?{note:note.trim()}:{})})
+   if(action==='verify'&&updated?.isFinalPayment)navigate(`projects/${payment.projectId}?payment=${payment.id}&distribution=1`)
+  }catch(error){window.alert(error.message||'Payment review could not be saved.')}
+  finally{setBusyId('')}
+ }
+ const canReviewPayment=['super_admin','admin','manager','finance'].includes(user?.role)
+ const approve=async(payment)=>{
+  if(!window.confirm(`Approve cash payment ${payment.reference||payment.id}? This will mark it as received.`))return
+  setBusyId(payment.id)
+  try{
+   const updated=await approveCashPayment(payment.id)
+   if(updated?.isFinalPayment)navigate(`projects/${payment.projectId}?payment=${payment.id}&distribution=1`)
+  }catch(error){window.alert(error.message||'Cash payment could not be approved.')}
+  finally{setBusyId('')}
+ }
+ if(!payments.length)return null
+ return <div className="table-scroll"><table><thead><tr><th>Payment</th><th>Payment date</th><th>Method · source</th><th>Transaction reference</th><th>Amount</th><th>Submitted by · time</th><th>Verified by · time</th><th>Verification</th><th>Payment status</th><th>Proof</th><th>Action</th></tr></thead><tbody>{payments.map((payment)=>{
+  const cashPending=String(payment.paymentMethod||payment.method).toLowerCase()==='cash'&&payment.verificationStatus==='Awaiting Second Approval'
+  const reviewable=canReviewPayment&&['Submitted','Under Verification','Correction Requested','Disputed'].includes(payment.status)&&!cashPending
+  const canApproveCash=cashPending&&['super_admin','admin','manager','finance'].includes(user?.role)&&String(payment.recordedBy?.id||payment.recordedBy?._id||payment.recordedBy)!==String(user?.id)
+  return <tr key={payment.id} id={`payment-${payment.id}`} className={String(focusPaymentId)===String(payment.id)?'payment-row-focused':''}>
+   <td className="ref-id">{payment.paymentCode||payment.id.toUpperCase()}{payment.isFinalPayment&&<strong className="final-payment-badge">Final payment</strong>}</td>
+   <td>{payment.date?new Date(payment.date).toLocaleDateString('en-IN'):'—'}</td>
+   <td>{payment.method||payment.paymentMethod||'—'} · {payment.paymentSource==='client_portal'?'Client':'Internal'}</td>
+   <td>{payment.transactionId||'—'}</td>
+   <td>{currency(payment.amount)}</td>
+   <td>{payment.submittedBy?.name||payment.recordedBy?.name||'—'}<small>{payment.createdAt?new Date(payment.createdAt).toLocaleString('en-IN'):''}</small></td>
+   <td>{payment.verifiedBy?.name||payment.approvedBy?.name||'—'}<small>{payment.verifiedAt||payment.cashApprovedAt?new Date(payment.verifiedAt||payment.cashApprovedAt).toLocaleString('en-IN'):''}</small></td>
+   <td><Status>{payment.verificationStatus||'—'}</Status></td>
+   <td><Status>{payment.status}</Status></td>
+   <td>{(payment.proofFiles||[]).map((file,index)=>{const url=typeof file==='object'?(file.cloudinaryUrl||file.url):null;return url?<a key={file.id||index} href={url} target="_blank" rel="noreferrer">{file.originalName||file.fileName||`Proof ${index+1}`} ↗</a>:null})}</td>
+   <td>{reviewable&&<><button className="mini-action" disabled={busyId===payment.id} onClick={()=>review(payment,'verify')}>Verify</button><button className="mini-action" disabled={busyId===payment.id} onClick={()=>review(payment,'request_correction')}>Request correction</button><button className="mini-action" disabled={busyId===payment.id} onClick={()=>review(payment,'reject')}>Reject</button></>}{canApproveCash&&<button className="mini-action" disabled={busyId===payment.id} onClick={()=>approve(payment)}>Approve cash</button>}</td>
+  </tr>
+ })}</tbody></table></div>
+}
+function distributionRulesKey(project){
+ const shares=(project.founderShares||[]).map((share)=>`${share.userId?.id||share.userId?._id||share.userId}:${share.percent}`).join(',')
+ return `${project.id||project._id}:${project.companySharePercent??100}:${shares}`
+}
+function ProjectRevenueDistribution({project,distribution,isFullyPaid,data,canConfigure,saveRules,finalize,updateDistribution,reverseDistribution,autoOpen}){
+ const projectId=project.id||project._id
+ const founders=(data.teamMembers||[]).filter((member)=>['super_admin','admin'].includes(member.role)&&member.status!=='Inactive')
+ const [companyPercent,setCompanyPercent]=useState(Number(project.companySharePercent??100))
+ const [shares,setShares]=useState(()=> (project.founderShares||[]).map((share)=>({userId:share.userId?.id||share.userId?._id||share.userId,percent:Number(share.percent)})))
+ const [busy,setBusy]=useState(false)
+ const contributionTotal=shares.reduce((sum,share)=>sum+Number(share.percent||0),0)
+ const balanced=companyPercent===100?shares.length===0:Math.abs(contributionTotal-100)<0.001
+ const founderPoolPercent=100-companyPercent
+ const projectAmount=Number(project.agreedAmount||project.finalAmount||project.quotedAmount||project.budget||0)
+ const finalPayment=data.payments.find((payment)=>payment.isFinalPayment&&String(payment.projectId)===String(projectId))
+ useEffect(()=>{if(autoOpen)document.getElementById('project-revenue-distribution')?.scrollIntoView({behavior:'smooth',block:'start'})},[autoOpen])
+ const save=async()=>{
+  if(!balanced){window.alert('Founder contributions must total 100% of the founder pool.');return}
+  setBusy(true)
+  try{await saveRules(projectId,{companySharePercent:Number(companyPercent),founderShares:shares})}
+  catch(error){window.alert(error.message||'Project allocation rules could not be saved.')}
+  finally{setBusy(false)}
+ }
+ const finalizeNow=async()=>{
+  if(!window.confirm(`Finalize revenue distribution for ${project.name} using the saved project rules? This creates a historical snapshot that cannot be edited.`))return
+  setBusy(true)
+  try{await finalize(projectId)}
+  catch(error){window.alert(error.message||'Project distribution could not be finalized.')}
+  finally{setBusy(false)}
+ }
+ return <section className="panel project-revenue-panel" id="project-revenue-distribution">
+  <div className="panel-heading"><div><span className="eyebrow">PROJECT-LEVEL REVENUE</span><h2>Revenue distribution</h2></div>{distribution?<Status>Finalized</Status>:isFullyPaid&&<Status>Distribution Pending</Status>}</div>
+  {!isFullyPaid&&!distribution&&<p className="finance-hint">Distribution unavailable until this project is fully paid and verified. No partial payment is allocated.</p>}
+  {distribution?<><div className="distribution-amount-summary"><div><span>Project revenue</span><strong>{currency(distribution.grossAmount)}</strong></div><div><span>Company · {distribution.companySharePercent}%</span><strong>{currency(distribution.companyAmount??distribution.allocations?.find((item)=>item.recipientType==='company')?.amount)}</strong></div><div><span>Founder pool · {distribution.founderPoolPercent??100-distribution.companySharePercent}%</span><strong>{currency(distribution.founderPoolAmount??distribution.allocations?.filter((item)=>item.recipientType==='founder').reduce((sum,item)=>sum+Number(item.amount||0),0))}</strong></div></div><div className="table-scroll"><table><thead><tr><th>Recipient</th><th>Contribution of founder pool</th><th>Effective project share</th><th>Final allocation</th></tr></thead><tbody>{(distribution.allocations||[]).map((allocation,index)=><tr key={`${allocation.founderId||allocation.recipientType}-${index}`}><td>{allocation.founderName}</td><td>{allocation.recipientType==='company'?'—':`${allocation.contributionPercentage??allocation.percent}%`}</td><td>{allocation.effectiveProjectPercentage??allocation.percent}%</td><td>{currency(allocation.amount)}</td></tr>)}</tbody></table></div><small>Finalized {distribution.finalizedAt?new Date(distribution.finalizedAt).toLocaleString('en-IN'):'—'} · Historical project snapshot</small>{canConfigure&&<DistributionCorrectionEditor distribution={distribution} founders={founders} onUpdate={updateDistribution} onReverse={reverseDistribution}/>}</>:isFullyPaid?<><p className="finance-hint">Final payment action completed. Deal amount: {currency(projectAmount)} · verified payments: {currency(project.paidAmount)} · remaining: {currency(Math.max(0,projectAmount-Number(project.paidAmount||0)))} · final payment: {currency(finalPayment?.amount||0)}. Complete the project-specific contribution and finalize it; the financial workflow remains pending until then.</p>{canConfigure&&<div className="project-distribution-editor"><label className="field">Company allocation (%)<input type="number" min="0" max="100" step="0.01" value={companyPercent} onChange={(event)=>setCompanyPercent(Number(event.target.value))}/></label><div className="distribution-pool-summary"><span>Founder pool</span><strong>{founderPoolPercent.toFixed(2)}% · {currency(projectAmount*founderPoolPercent/100)}</strong></div>{shares.map((share,index)=><div className="finance-share-row" key={`${share.userId}-${index}`}><label className="field">Founder<select value={share.userId||''} onChange={(event)=>setShares(shares.map((item,i)=>i===index?{...item,userId:event.target.value}:item))}><option value="">Select founder</option>{founders.map((founder)=><option key={founder.id} value={founder.id}>{founder.name}</option>)}</select></label><label className="field">Contribution (% of founder pool)<input type="number" min="0.01" max="100" step="0.01" value={share.percent} onChange={(event)=>setShares(shares.map((item,i)=>i===index?{...item,percent:Number(event.target.value)}:item))}/></label><span className="distribution-preview">{(founderPoolPercent*Number(share.percent||0)/100).toFixed(2)}% of project · {currency(projectAmount*founderPoolPercent*Number(share.percent||0)/10000)}</span><button className="button button-outline button-small" type="button" onClick={()=>setShares(shares.filter((_,i)=>i!==index))}>Remove</button></div>)}<div className="finance-rules-actions"><span className={balanced?'valid':'invalid'}>Company + founder pool = 100%. Founder contributions: {contributionTotal.toFixed(2)}% {companyPercent===100&&!shares.length?'':`of 100% required`}</span><button className="button button-outline button-small" type="button" onClick={()=>setShares([...shares,{userId:'',percent:0}])} disabled={companyPercent===100}>Add founder</button><button className="button button-outline button-small" type="button" disabled={busy||!balanced} onClick={save}>{busy?'Saving…':'Save project rules'}</button><button className="button button-primary button-small" type="button" disabled={busy||!balanced} onClick={finalizeNow}>{busy?'Working…':'Finalize distribution'}</button></div></div>}</>:<p className="finance-hint">A full verified payment is required before revenue can be allocated.</p>}
+ </section>
+}
+function DistributionCorrectionEditor({distribution,founders,onUpdate,onReverse}){
+ const [editing,setEditing]=useState(false)
+ const [busy,setBusy]=useState(false)
+ const [companyPercent,setCompanyPercent]=useState(Number(distribution.companySharePercent||0))
+ const [shares,setShares]=useState((distribution.allocations||[]).filter((allocation)=>allocation.recipientType==='founder').map((allocation)=>({userId:allocation.founderId?.id||allocation.founderId?._id||allocation.founderId,percent:Number(allocation.contributionPercentage??allocation.percent)})))
+ const contributionTotal=shares.reduce((sum,share)=>sum+Number(share.percent||0),0)
+ const balanced=companyPercent===100?shares.length===0:Math.abs(contributionTotal-100)<0.001
+ const update=async()=>{
+  if(!balanced){window.alert('Founder contributions must total 100% of the founder pool.');return}
+  const reason=window.prompt('Reason for correcting this finalized distribution?')
+  if(reason===null)return
+  if(reason.trim().length<3){window.alert('Enter a reason of at least 3 characters.');return}
+  setBusy(true)
+  try{await onUpdate(distribution.id,{companySharePercent,founderShares:shares,reason:reason.trim()});setEditing(false)}
+  catch(error){window.alert(error.message||'Distribution correction failed.')}
+  finally{setBusy(false)}
+ }
+ const reverse=async()=>{
+  if(!window.confirm('Reverse this distribution? A compensating ledger entry will be recorded.'))return
+  const reason=window.prompt('Reason for reversing this finalized distribution?')
+  if(reason===null)return
+  if(reason.trim().length<3){window.alert('Enter a reason of at least 3 characters.');return}
+  setBusy(true)
+  try{await onReverse(distribution.id,reason.trim())}
+  catch(error){window.alert(error.message||'Distribution reversal failed.')}
+  finally{setBusy(false)}
+ }
+ return <div className="project-distribution-editor"><div className="finance-rules-actions"><button className="button button-outline button-small" type="button" disabled={busy} onClick={()=>setEditing(!editing)}>{editing?'Cancel correction':'Correct allocation'}</button><button className="button button-outline button-small" type="button" disabled={busy} onClick={reverse}>Reverse distribution</button></div>{editing&&<><label className="field">Company allocation (%)<input type="number" min="0" max="100" step="0.01" value={companyPercent} onChange={(event)=>setCompanyPercent(Number(event.target.value))}/></label>{shares.map((share,index)=><div className="finance-share-row" key={`${share.userId}-${index}`}><label className="field">Founder<select value={share.userId||''} onChange={(event)=>setShares(shares.map((item,i)=>i===index?{...item,userId:event.target.value}:item))}><option value="">Select founder</option>{founders.map((founder)=><option key={founder.id} value={founder.id}>{founder.name}</option>)}</select></label><label className="field">Contribution (% of founder pool)<input type="number" min="0.01" max="100" step="0.01" value={share.percent} onChange={(event)=>setShares(shares.map((item,i)=>i===index?{...item,percent:Number(event.target.value)}:item))}/></label><button className="button button-outline button-small" type="button" onClick={()=>setShares(shares.filter((_,i)=>i!==index))}>Remove</button></div>)}<div className="finance-rules-actions"><span className={balanced?'valid':'invalid'}>Founder contributions: {contributionTotal.toFixed(2)}% of 100% required</span><button className="button button-outline button-small" type="button" disabled={companyPercent===100} onClick={()=>setShares([...shares,{userId:'',percent:0}])}>Add founder</button><button className="button button-primary button-small" type="button" disabled={busy||!balanced} onClick={update}>{busy?'Saving…':'Save correction'}</button></div></>}</div>
+}
 function CreativeAssets({id,clientId,quickAdd,data}){const assets=data.assets.filter(a=>a.projectId===id);return <section className="panel"><div className="panel-heading"><div><span className="eyebrow">CREATIVE PRODUCTION</span><h2>Assets & prompts</h2></div><button className="button button-outline button-small" onClick={()=>quickAdd('assets',{projectId:id,clientId})}><Icon name="plus" size={15}/> Add asset</button></div>{assets.length?assets.map(a=><div className="detail-list-row asset-row" key={a.id}><span className="service-mark"><Icon name="file" size={16}/></span><span><strong>{a.name}</strong><small>{a.type} · v{a.version||'1'} · {a.status}</small>{a.prompt&&<small>Prompt: {a.prompt}</small>}</span>{a.url&&<a href={a.url} target="_blank" rel="noreferrer">Open ↗</a>}</div>):<Empty text="Add reference images, creative prompts and final output links to this project."/>}</section>}
 function ProjectCollaboration({project,data,quickAdd,completeMilestone,setDeliverableStatus,patch}){
   const files=data.files.filter(file=>file.projectId===project.id)
@@ -65,6 +190,6 @@ function ProjectCollaboration({project,data,quickAdd,completeMilestone,setDelive
 }
 function FileRows({files,onVisibility,onStatus}){
   if(!files.length)return null
-  return <div className="file-list">{files.map(file=>{const href=file.fileData||file.url;const image=file.type?.toLowerCase().includes('image')||/\.(png|jpe?g|gif|webp)$/i.test(file.name);const video=file.type?.toLowerCase().includes('video')||/\.(mp4|mov|webm)$/i.test(file.name);return <div className="file-row" key={file.id}><span className="file-preview">{image&&href?<img src={href} alt=""/>:video?<Icon name="sparkles" size={17}/>:<Icon name="file" size={17}/>}</span><span className="file-details"><strong>{file.name}</strong><small>{file.type||'File'}{file.size?` · ${(file.size/1024).toFixed(0)} KB`:''} · {file.category||'Other'}</small><small>{file.uploadedBy||'MAGAF Team'} · {file.uploadedAt||'Date unavailable'} · {file.description||'No description'}</small></span>{file.status&&<Status>{file.status}</Status>}{onStatus&&<select className="row-status-select" aria-label={`Deliverable status for ${file.name}`} value={file.status||'Draft'} onChange={event=>onStatus(file,event.target.value)}>{['Draft','Internal Review','Client Review','Revision Requested','Approved','Final','Delivered'].map(status=><option key={status}>{status}</option>)}</select>}{onVisibility&&<label className="file-visibility"><input type="checkbox" checked={file.visibility==='Client'} onChange={event=>onVisibility(file,event.target.checked?'Client':'Internal')}/> Visible to client</label>}{href&&<a className="file-open" href={href} target="_blank" rel="noreferrer" download={file.fileData?file.name:undefined}>{video?'Play ↗':image?'View ↗':'Open ↗'}</a>}</div>})}</div>
+  return <div className="file-list">{files.map(file=>{const href=file.fileData||file.url;const image=file.type?.toLowerCase().includes('image')||/\.(png|jpe?g|gif|webp)$/i.test(file.name);const video=file.type?.toLowerCase().includes('video')||/\.(mp4|mov|webm)$/i.test(file.name);const paymentProof=file.category==='payment_proof';return <div className="file-row" key={file.id}><span className="file-preview">{image&&href?<img src={href} alt=""/>:video?<Icon name="sparkles" size={17}/>:<Icon name="file" size={17}/>}</span><span className="file-details"><strong>{file.name}</strong><small>{file.type||'File'}{file.size?` · ${(file.size/1024).toFixed(0)} KB`:''} · {file.category||'Other'}</small><small>{file.uploadedBy||'MAGAF Team'} · {file.uploadedAt||'Date unavailable'} · {file.description||'No description'}</small></span>{file.status&&<Status>{file.status}</Status>}{onStatus&&!paymentProof&&<select className="row-status-select" aria-label={`Deliverable status for ${file.name}`} value={file.status||'Draft'} onChange={event=>onStatus(file,event.target.value)}>{['Draft','Internal Review','Client Review','Revision Requested','Approved','Final','Delivered'].map(status=><option key={status}>{status}</option>)}</select>}{onVisibility&&<label className="file-visibility"><input type="checkbox" checked={file.visibility==='Client'} onChange={event=>onVisibility(file,event.target.checked?'Client':'Internal')}/> Visible to client</label>}{href&&<a className="file-open" href={href} target="_blank" rel="noreferrer" download={file.fileData?file.name:undefined}>{video?'Play ↗':image?'View ↗':'Open ↗'}</a>}</div>})}</div>
 }
 function DealTable({deals,data,navigate}){return deals.length?<div className="table-scroll"><table><thead><tr><th>Deal</th><th>Service</th><th>Deal status</th><th>Payment status</th><th>Agreed</th><th>Balance</th></tr></thead><tbody>{deals.map(deal=><tr className="clickable-row" key={deal.id} onClick={()=>navigate(`deals/${deal.id}`)}><td>{deal.title}</td><td>{data.services.find(service=>service.id===deal.serviceId)?.shortName||'—'}</td><td><Status>{deal.status}</Status></td><td><Status>{deal.paymentStatus||'Payment Pending'}</Status></td><td>{currency(deal.agreedAmount||deal.quotedAmount)}</td><td>{currency(dealBalance(data,deal))}</td></tr>)}</tbody></table></div>:null}
