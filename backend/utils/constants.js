@@ -8,7 +8,7 @@ export const MESSAGE_TYPES = Object.freeze(['text', 'image', 'video', 'audio', '
 export const TASK_STATUSES = Object.freeze(['todo', 'in_progress', 'review', 'completed', 'cancelled'])
 export const STUDENT_STATUSES = Object.freeze(['inquiry', 'enrolled', 'active', 'paused', 'completed', 'dropped'])
 export const ROLES_WITH_ALL_ACCESS = Object.freeze(['super_admin', 'admin'])
-
+//s
 export const SERVICE_SLUGS = Object.freeze({
   software: 'software-development',
   automation: 'business-automation',
