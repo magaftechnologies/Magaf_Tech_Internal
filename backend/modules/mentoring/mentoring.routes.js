@@ -8,7 +8,7 @@ import * as paymentController from '../payments/payment.controller.js'
 import { paymentRules } from '../../validators/businessValidators.js'
 
 const router = Router()
-router.use(authenticate, requireTeam, allowRoles('super_admin', 'admin', 'manager', 'mentor'))
+router.use(authenticate, requireTeam, allowRoles('super_admin', 'admin', 'manager', 'mentor', 'finance'))
 router.get('/sessions', controller.list)
 router.post('/sessions', controller.create)
 router.patch('/sessions/:id', objectIdParam(), validate, controller.update)

@@ -38,7 +38,7 @@ export default function AppLayout({ route, navigate, children }) {
       ...data.projects.filter(x=>[x.name,x.id,x.repositoryUrl].some(value=>value?.toLowerCase().includes(term))).map(x=>({label:x.name,type:'Project',route:`projects/${x.id}`})),
       ...data.deals.filter(x=>[x.title,x.id,x.clientId].some(value=>value?.toLowerCase().includes(term))).map(x=>({label:x.title,type:'Deal',route:`deals/${x.id}`})),
       ...data.services.filter(x=>x.name.toLowerCase().includes(term)).map(x=>({label:x.shortName,type:'Service',route:`services/${x.id}`})),
-      ...data.payments.filter(x=>(x.reference||x.id).toLowerCase().includes(term)).map(x=>({label:x.reference||x.id,type:'Payment',route:x.projectId?`projects/${x.projectId}?payment=${x.id}`:'payments'})),
+      ...data.payments.filter(x=>(x.reference||x.id).toLowerCase().includes(term)).map(x=>({label:x.reference||x.id,type:'Payment',route:x.projectId?`projects/${x.projectId}?payment=${x.id}`:x.studentId?`students/${x.studentId}?payment=${x.id}`:'payments'})),
       ...data.payments.filter(x=>x.invoiceId?.toLowerCase().includes(term)).map(x=>({label:x.invoiceId,type:'Invoice',route:x.projectId?`projects/${x.projectId}?payment=${x.id}`:'payments'})),
       ...data.invoices.filter(x=>[x.invoiceNumber,x.notes].some(value=>value?.toLowerCase().includes(term))).map(x=>({label:x.invoiceNumber,type:'Invoice',route:'invoices'})),
       ...data.files.filter(x=>[x.name,x.description,x.category,x.url].some(value=>value?.toLowerCase().includes(term))).map(x=>({label:x.name,type:'File',route:'files'})),
@@ -53,7 +53,7 @@ export default function AppLayout({ route, navigate, children }) {
     else if(item.recordId){
       const payment=item.type==='payment'?data.payments.find((record)=>record.id===item.recordId):null
       const route=item.type==='payment'
-        ?payment?.projectId?`projects/${payment.projectId}?payment=${payment.id}`:'payments'
+        ?payment?.projectId?`projects/${payment.projectId}?payment=${payment.id}`:payment?.studentId?`students/${payment.studentId}?payment=${payment.id}`:'payments'
         :item.type==='invoice'?'invoices'
           :item.type==='request'?'requests'
             :item.type==='student'||item.type==='session'?'students'

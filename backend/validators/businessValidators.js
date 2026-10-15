@@ -30,12 +30,25 @@ export const paymentRules = [
   body('paymentMethod').optional().isIn(['cash', 'upi', 'bank_transfer', 'card', 'online', 'other']),
   body('paymentType').optional().isIn(['advance', 'milestone', 'full_payment', 'partial_payment', 'subscription', 'mentoring_fee', 'maintenance', 'other']),
   body('projectId').optional({ checkFalsy: true }).isMongoId(),
+  body('studentId').optional({ checkFalsy: true }).isMongoId(),
   body('clientId').optional({ checkFalsy: true }).isMongoId(),
   body('dealId').optional({ checkFalsy: true }).isMongoId(),
   body('invoiceId').optional({ checkFalsy: true }).isMongoId(),
   body('paymentAccountId').optional({ checkFalsy: true }).isMongoId(),
+  body('paymentDate').optional({ checkFalsy: true }).isISO8601(),
+  body('transactionId').optional({ checkFalsy: true }).isString().trim().isLength({ max: 160 }),
+  body('notes').optional({ checkFalsy: true }).isString().trim().isLength({ max: 4000 }),
   body('proofFiles').optional().isArray({ max: 5 }),
   body('proofFiles.*').optional().isMongoId(),
+]
+export const paymentUpdateRules = [
+  body('amount').optional().isFloat({ min: 0.01 }),
+  body('status').optional().isIn(PAYMENT_STATUSES),
+  body('paymentMethod').optional().isIn(['cash', 'upi', 'bank_transfer', 'card', 'online', 'other']),
+  body('transactionId').optional({ checkFalsy: true }).isString().trim().isLength({ max: 160 }),
+  body('paymentDate').optional({ checkFalsy: true }).isISO8601(),
+  body('dueDate').optional({ checkFalsy: true }).isISO8601(),
+  body('notes').optional({ checkFalsy: true }).isString().trim().isLength({ min: 3, max: 4000 }),
 ]
 export const clientPaymentRules = [
   body('amount').isFloat({ min: 0.01 }),

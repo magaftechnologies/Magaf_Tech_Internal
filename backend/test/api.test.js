@@ -410,8 +410,21 @@ test('MAGAF backend enforces client isolation and synchronizes core business flo
     })
     await request(app).put(`/api/finance/projects/${project.id}/distribution-rules`)
       .auth(login.body.data.token, { type: 'bearer' })
+      .send({ founderShares: [{ userId: founder.id, percent: 100 }] })
+      .expect(400)
+    const savedRules = await request(app).put(`/api/finance/projects/${project.id}/distribution-rules`)
+      .auth(login.body.data.token, { type: 'bearer' })
       .send({ companySharePercent: 60, founderShares: [{ userId: founder.id, percent: 100 }] })
       .expect(200)
+    const persistedRules = await models.Project.findById(project.id).populate('founderShares.userId', 'name')
+    assert.equal(persistedRules.companySharePercent, 60)
+    assert.equal(persistedRules.founderShares.length, 1)
+    assert.equal(String(persistedRules.founderShares[0].userId.id), founder.id)
+    assert.equal(persistedRules.founderShares[0].percent, 100)
+    assert.equal(savedRules.body.data.companySharePercent, persistedRules.companySharePercent)
+    assert.equal(savedRules.body.data.founderShares.length, 1)
+    assert.equal(String(savedRules.body.data.founderShares[0].userId.id), founder.id)
+    assert.equal(savedRules.body.data.founderShares[0].percent, persistedRules.founderShares[0].percent)
     await request(app).put(`/api/finance/projects/${project.id}/distribution-rules`)
       .auth(teamToken, { type: 'bearer' })
       .send({ companySharePercent: 50, founderShares: [{ userId: founder.id, percent: 50 }] })
@@ -744,11 +757,87 @@ test('MAGAF backend enforces client isolation and synchronizes core business flo
 
   await t.test('mentoring payments, sessions and service extensions use their connected models', async () => {
     const mentoringService = await models.Service.create({ name: 'Mentoring', slug: 'development-mentoring', isActive: true })
-    const student = await models.Student.create({ name: 'Test Student', serviceId: mentoringService.id, status: 'active', sessionsRemaining: 2 })
     const teamUser = await models.User.findOne({ email: 'manager@test.magaf' })
+    await request(app).post('/api/mentoring/students')
+      .auth(teamToken, { type: 'bearer' })
+      .send({ name: 'Incomplete Student', serviceId: mentoringService.id })
+      .expect(400)
+    const enrollment = await request(app).post('/api/mentoring/students')
+      .auth(teamToken, { type: 'bearer' })
+      .send({
+        name: 'Test Student',
+        email: 'test-student@test.magaf',
+        serviceId: mentoringService.id,
+        courseName: 'Node.js Foundations',
+        agreedAmount: 2000,
+        status: 'active',
+        interestedTechnologies: ['Node.js', 'Node.js fundamentals'],
+        assignedMentor: teamUser.id,
+        sessionsRemaining: 2,
+      })
+      .expect(201)
+    const student = await models.Student.findById(enrollment.body.data.id)
     const proof = await createPaymentProof({ user: teamUser })
+    const mentorDirectory = await request(app).get('/api/team-members').auth(teamToken, { type: 'bearer' }).expect(200)
+    assert.ok(mentorDirectory.body.data.some((user) => user.id === teamUser.id))
+    assert.ok(mentorDirectory.body.data.length > 1)
+    const dashboardBefore = await request(app).get('/api/dashboard/summary').auth(teamToken, { type: 'bearer' }).expect(200)
+    assert.equal(dashboardBefore.body.data.financials.totalContractedValue, dashboardBefore.body.data.revenue.booked)
     const mentoringPayment = await request(app).post('/api/mentoring/payments').set('Authorization', `Bearer ${teamToken}`).send({ studentId: student.id, amount: 1500, status: 'paid', paymentMethod: 'upi', proofFiles: [proof.id] }).expect(201)
     assert.equal(mentoringPayment.body.data.paymentType, 'mentoring_fee')
+    assert.equal(mentoringPayment.body.data.studentId, student.id)
+    assert.equal(mentoringPayment.body.data.projectId, undefined)
+    await request(app).patch(`/api/payments/${mentoringPayment.body.data.id}`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ amount: 1400 })
+      .expect(400)
+    const correctedPayment = await request(app).patch(`/api/payments/${mentoringPayment.body.data.id}`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ amount: 1400, notes: 'Corrected recorded amount' })
+      .expect(200)
+    assert.equal(correctedPayment.body.data.amount, 1400)
+    const correctedRecord = await models.Payment.findById(mentoringPayment.body.data.id)
+    assert.equal(correctedRecord.financeRevision, 1)
+    assert.match(correctedRecord.paymentHistory.at(-1).note, /1500 to 1400/)
+    assert.equal((await models.Student.findById(student.id)).paidAmount, 1400)
+    const dashboardAfterPayment = await request(app).get('/api/dashboard/summary').auth(teamToken, { type: 'bearer' }).expect(200)
+    assert.equal(dashboardAfterPayment.body.data.mentoring.collected, 1400)
+    assert.equal(dashboardAfterPayment.body.data.mentoring.outstanding, 600)
+    assert.equal(dashboardAfterPayment.body.data.mentoring.newThisMonth, 1)
+    assert.equal(dashboardAfterPayment.body.data.revenue.total, dashboardBefore.body.data.revenue.total + 1400)
+    assert.equal(dashboardAfterPayment.body.data.financials.totalCollectedRevenue, dashboardBefore.body.data.financials.totalCollectedRevenue + 1400)
+    assert.equal(dashboardAfterPayment.body.data.financials.mentoringCollections, dashboardBefore.body.data.financials.mentoringCollections + 1400)
+    assert.equal(dashboardAfterPayment.body.data.financials.projectCollections, dashboardBefore.body.data.financials.projectCollections)
+    await request(app).patch(`/api/mentoring/students/${student.id}`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ agreedAmount: 2200 })
+      .expect(200)
+    const feeUpdatedStudent = await models.Student.findById(student.id)
+    assert.equal(feeUpdatedStudent.agreedAmount, 2200)
+    assert.equal(feeUpdatedStudent.assignedMentor.toString(), teamUser.id)
+    assert.ok(await models.Activity.exists({ entityId: student.id, action: 'student.enrollment_fee.updated' }))
+    const dashboardAfterFeeChange = await request(app).get('/api/dashboard/summary').auth(teamToken, { type: 'bearer' }).expect(200)
+    assert.equal(dashboardAfterFeeChange.body.data.mentoring.agreedFees, 2200)
+    assert.equal(dashboardAfterFeeChange.body.data.mentoring.outstanding, 800)
+    assert.equal(dashboardAfterFeeChange.body.data.financials.totalContractedValue, dashboardBefore.body.data.financials.totalContractedValue + 200)
+    const secondEnrollment = await request(app).post('/api/mentoring/students')
+      .auth(teamToken, { type: 'bearer' })
+      .send({
+        name: 'Second Topic Student',
+        email: 'second-topic-student@test.magaf',
+        serviceId: mentoringService.id,
+        courseName: 'Backend Foundations',
+        agreedAmount: 0,
+        status: 'active',
+        interestedTechnologies: ['Node.js', 'Node.js', 'Database'],
+      })
+      .expect(201)
+    assert.ok(secondEnrollment.body.data.id)
+    const dashboardWithTopics = await request(app).get('/api/dashboard/summary').auth(teamToken, { type: 'bearer' }).expect(200)
+    assert.equal(dashboardWithTopics.body.data.mentoring.topics.find((item) => item.topic === 'Node.js').students, 2)
+    assert.equal(dashboardWithTopics.body.data.mentoring.topics.find((item) => item.topic === 'Node.js fundamentals').students, 1)
+    assert.equal(dashboardWithTopics.body.data.mentoring.students, 2)
+    assert.equal(dashboardWithTopics.body.data.mentoring.enrollments, 2)
     const session = await request(app).post('/api/mentoring/sessions').set('Authorization', `Bearer ${teamToken}`).send({
       studentId: student.id, date: new Date().toISOString(), topic: 'Node.js fundamentals',
     }).expect(201)
@@ -756,7 +845,38 @@ test('MAGAF backend enforces client isolation and synchronizes core business flo
     const updatedStudent = await models.Student.findById(student.id)
     assert.equal(updatedStudent.sessionsCompleted, 1)
     assert.equal(updatedStudent.sessionsRemaining, 1)
-    assert.equal(updatedStudent.paidAmount, 1500)
+    assert.equal(updatedStudent.paidAmount, 1400)
+    const cashMentoringPayment = await request(app).post('/api/mentoring/payments')
+      .auth(teamToken, { type: 'bearer' })
+      .send({ studentId: student.id, amount: 600, paymentMethod: 'cash' })
+      .expect(201)
+    assert.equal(cashMentoringPayment.body.data.status, 'paid')
+    assert.equal(cashMentoringPayment.body.data.verificationStatus, 'not_required')
+    const dashboardAfterCashPayment = await request(app).get('/api/dashboard/summary').auth(teamToken, { type: 'bearer' }).expect(200)
+    assert.equal(dashboardAfterCashPayment.body.data.mentoring.collected, 2000)
+    assert.equal(dashboardAfterCashPayment.body.data.mentoring.outstanding, 200)
+    const globalStudentPayments = await request(app).get(`/api/payments?studentId=${student.id}`).auth(teamToken, { type: 'bearer' }).expect(200)
+    assert.equal(globalStudentPayments.body.data.length, 2)
+    assert.equal(globalStudentPayments.body.data.reduce((sum, payment) => sum + payment.amount, 0), 2000)
+    assert.ok(globalStudentPayments.body.data.every((payment) => !payment.projectId))
+    const serviceAnalytics = await request(app).get('/api/dashboard/services').auth(teamToken, { type: 'bearer' }).expect(200)
+    const mentoringAnalytics = serviceAnalytics.body.data.find((row) => row.service.slug === 'development-mentoring')
+    assert.equal(mentoringAnalytics.revenue, 2000)
+    assert.equal(mentoringAnalytics.outstanding, 200)
+    assert.equal(mentoringAnalytics.studentCount, 2)
+
+    const collectionsBeforeOldPayment = dashboardAfterCashPayment.body.data.financials.collectionsThisMonth
+    await models.Payment.create({
+      studentId: student.id,
+      serviceId: mentoringService.id,
+      amount: 25,
+      status: 'paid',
+      paymentType: 'mentoring_fee',
+      paymentDate: new Date('2020-01-15T12:00:00.000Z'),
+    })
+    const dashboardWithHistoricalPayment = await request(app).get('/api/dashboard/summary').auth(teamToken, { type: 'bearer' }).expect(200)
+    assert.equal(dashboardWithHistoricalPayment.body.data.financials.collectionsThisMonth, collectionsBeforeOldPayment)
+    assert.equal(dashboardWithHistoricalPayment.body.data.financials.totalCollectedRevenue, dashboardAfterCashPayment.body.data.financials.totalCollectedRevenue + 25)
 
     const advertisingService = await models.Service.create({ name: 'Advertising', slug: 'advertising-creative', isActive: true })
     const advertisingProject = await models.Project.create({ projectName: 'Campaign', clientId: clientA.id, serviceId: advertisingService.id, finalAmount: 5000, balanceAmount: 5000 })
@@ -768,7 +888,7 @@ test('MAGAF backend enforces client isolation and synchronizes core business flo
     const endDate = new Date(Date.now() + 86400000).toISOString()
     const target = await request(app).post('/api/targets').set('Authorization', `Bearer ${teamToken}`).send({ targetType: 'revenue', period: 'custom', targetValue: 1000, startDate, endDate }).expect(201)
     const targetList = await request(app).get('/api/targets').set('Authorization', `Bearer ${teamToken}`).expect(200)
-    assert.equal(targetList.body.data.find((item) => item.id === target.body.data.id).currentValue, 1500)
+    assert.equal(targetList.body.data.find((item) => item.id === target.body.data.id).currentValue, 2000)
   })
 
   await t.test('lead targets calculate their current progress on the backend', async () => {

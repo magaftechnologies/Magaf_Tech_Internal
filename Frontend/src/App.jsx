@@ -10,6 +10,7 @@ import ClientPortal from './components/ClientPortal'
 import TeamMessages from './components/TeamMessages'
 import AccountSecurity from './components/AccountSecurity'
 import FinanceProfile from './components/FinanceProfile'
+import StudentDetail from './components/StudentDetail'
 import Icon from './components/Icon'
 import './App.css'
 import './integration.css'
@@ -54,6 +55,7 @@ function Workspace() {
   else if(page==='messages')content=<TeamMessages key={id||'all'} conversationId={id}/>
   else if(page==='finance'&&id==='company')content=<FinanceProfile ownerType="company" navigate={navigate}/>
   else if(page==='finance'&&id==='founders'&&subId)content=<FinanceProfile ownerType="founder" ownerId={subId} navigate={navigate}/>
+  else if(page==='students'&&id)content=<StudentDetail id={id} paymentId={routeParams.get('payment')} navigate={navigate} quickAdd={quickAdd}/>
   else if(id)content=<RecordDetail type={page} id={id} navigate={navigate} quickAdd={quickAdd} focusPaymentId={routeParams.get('payment')} autoOpenDistribution={routeParams.get('distribution')==='1'}/>
   else if(page==='settings')content=<Settings navigate={navigate}/>
   else content=<RecordsPage page={page} navigate={navigate} quickAdd={quickAdd} initialRecipient={routeParams.get('recipient')}/>

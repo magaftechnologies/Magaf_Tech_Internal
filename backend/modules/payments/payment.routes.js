@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { authenticate } from '../../middleware/authMiddleware.js'
 import { allowRoles } from '../../middleware/roleMiddleware.js'
 import { validate } from '../../middleware/validationMiddleware.js'
-import { clientPaymentRules, disputeReviewRules, disputeRules, objectIdParam, paymentReviewRules, paymentRules } from '../../validators/businessValidators.js'
+import { clientPaymentRules, disputeReviewRules, disputeRules, objectIdParam, paymentReviewRules, paymentRules, paymentUpdateRules } from '../../validators/businessValidators.js'
 import * as controller from './payment.controller.js'
 
 const router = Router()
@@ -16,5 +16,5 @@ router.patch('/:id/verification', allowRoles('super_admin', 'admin', 'manager', 
 router.patch('/:id/cash-approval', allowRoles('super_admin', 'admin', 'manager', 'finance'), objectIdParam(), validate, controller.approveCash)
 router.post('/:id/disputes', allowRoles('client'), objectIdParam(), disputeRules, validate, controller.createDispute)
 router.patch('/:id/disputes/:disputeId', allowRoles('super_admin', 'admin', 'manager', 'finance'), objectIdParam(), objectIdParam('disputeId'), disputeReviewRules, validate, controller.reviewDispute)
-router.patch('/:id', allowRoles('super_admin', 'admin', 'manager', 'finance'), objectIdParam(), validate, controller.update)
+router.patch('/:id', allowRoles('super_admin', 'admin', 'manager', 'finance'), objectIdParam(), paymentUpdateRules, validate, controller.update)
 export default router

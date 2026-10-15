@@ -115,38 +115,64 @@ function PaymentTable({payments,user,focusPaymentId,reviewPayment,approveCashPay
 }
 function distributionRulesKey(project){
  const shares=(project.founderShares||[]).map((share)=>`${share.userId?.id||share.userId?._id||share.userId}:${share.percent}`).join(',')
- return `${project.id||project._id}:${project.companySharePercent??100}:${shares}`
+ return `${project.id||project._id}:${project.companySharePercent??''}:${shares}`
 }
 function ProjectRevenueDistribution({project,distribution,isFullyPaid,data,canConfigure,saveRules,finalize,updateDistribution,reverseDistribution,autoOpen}){
  const projectId=project.id||project._id
  const founders=(data.teamMembers||[]).filter((member)=>['super_admin','admin'].includes(member.role)&&member.status!=='Inactive')
- const [companyPercent,setCompanyPercent]=useState(Number(project.companySharePercent??100))
+ const [companyPercent,setCompanyPercent]=useState(project.companySharePercent==null?'':String(project.companySharePercent))
  const [shares,setShares]=useState(()=> (project.founderShares||[]).map((share)=>({userId:share.userId?.id||share.userId?._id||share.userId,percent:Number(share.percent)})))
  const [busy,setBusy]=useState(false)
+ const [autoOpenDismissed,setAutoOpenDismissed]=useState(false)
+ const [manuallyOpened,setManuallyOpened]=useState(false)
+ const dialogOpen=manuallyOpened||(Boolean(autoOpen)&&!autoOpenDismissed)
+ const closeDialog=()=>{setAutoOpenDismissed(true);setManuallyOpened(false)}
  const contributionTotal=shares.reduce((sum,share)=>sum+Number(share.percent||0),0)
- const balanced=companyPercent===100?shares.length===0:Math.abs(contributionTotal-100)<0.001
- const founderPoolPercent=100-companyPercent
+ const companyValue=companyPercent===''?NaN:Number(companyPercent)
+ const balanced=Number.isFinite(companyValue)&&companyValue>=0&&companyValue<=100&&(companyValue===100?shares.length===0:Math.abs(contributionTotal-100)<0.001)
+ const founderPoolPercent=100-(Number.isFinite(companyValue)?companyValue:0)
  const projectAmount=Number(project.agreedAmount||project.finalAmount||project.quotedAmount||project.budget||0)
  const finalPayment=data.payments.find((payment)=>payment.isFinalPayment&&String(payment.projectId)===String(projectId))
  useEffect(()=>{if(autoOpen)document.getElementById('project-revenue-distribution')?.scrollIntoView({behavior:'smooth',block:'start'})},[autoOpen])
  const save=async()=>{
-  if(!balanced){window.alert('Founder contributions must total 100% of the founder pool.');return}
+  if(companyPercent===''||!balanced){window.alert('Set a valid company allocation and founder contributions totaling 100% of the founder pool.');return false}
   setBusy(true)
-  try{await saveRules(projectId,{companySharePercent:Number(companyPercent),founderShares:shares})}
-  catch(error){window.alert(error.message||'Project allocation rules could not be saved.')}
+  try{
+   const rules={companySharePercent:companyValue,founderShares:shares}
+   const saved=await saveRules(projectId,rules)
+   const savedShares=(saved?.founderShares||[]).map((share)=>({userId:String(share.userId?.id||share.userId?._id||share.userId),percent:Number(share.percent)}))
+   const submittedShares=shares.map((share)=>({userId:String(share.userId),percent:Number(share.percent)}))
+   if(Number(saved?.companySharePercent)!==companyValue||JSON.stringify(savedShares)!==JSON.stringify(submittedShares)){
+    throw new Error('The server response did not match the persisted founder allocation. The distribution remains pending.')
+   }
+   return true
+  }catch(error){window.alert(error.message||'Project allocation rules could not be saved.');return false}
   finally{setBusy(false)}
  }
  const finalizeNow=async()=>{
-  if(!window.confirm(`Finalize revenue distribution for ${project.name} using the saved project rules? This creates a historical snapshot that cannot be edited.`))return
+  if(!window.confirm(`Save and finalize revenue distribution for ${project.name}? This creates a historical project snapshot.`))return
+  if(!await save())return
   setBusy(true)
-  try{await finalize(projectId)}
+  try{await finalize(projectId);closeDialog()}
   catch(error){window.alert(error.message||'Project distribution could not be finalized.')}
   finally{setBusy(false)}
  }
  return <section className="panel project-revenue-panel" id="project-revenue-distribution">
   <div className="panel-heading"><div><span className="eyebrow">PROJECT-LEVEL REVENUE</span><h2>Revenue distribution</h2></div>{distribution?<Status>Finalized</Status>:isFullyPaid&&<Status>Distribution Pending</Status>}</div>
   {!isFullyPaid&&!distribution&&<p className="finance-hint">Distribution unavailable until this project is fully paid and verified. No partial payment is allocated.</p>}
-  {distribution?<><div className="distribution-amount-summary"><div><span>Project revenue</span><strong>{currency(distribution.grossAmount)}</strong></div><div><span>Company · {distribution.companySharePercent}%</span><strong>{currency(distribution.companyAmount??distribution.allocations?.find((item)=>item.recipientType==='company')?.amount)}</strong></div><div><span>Founder pool · {distribution.founderPoolPercent??100-distribution.companySharePercent}%</span><strong>{currency(distribution.founderPoolAmount??distribution.allocations?.filter((item)=>item.recipientType==='founder').reduce((sum,item)=>sum+Number(item.amount||0),0))}</strong></div></div><div className="table-scroll"><table><thead><tr><th>Recipient</th><th>Contribution of founder pool</th><th>Effective project share</th><th>Final allocation</th></tr></thead><tbody>{(distribution.allocations||[]).map((allocation,index)=><tr key={`${allocation.founderId||allocation.recipientType}-${index}`}><td>{allocation.founderName}</td><td>{allocation.recipientType==='company'?'—':`${allocation.contributionPercentage??allocation.percent}%`}</td><td>{allocation.effectiveProjectPercentage??allocation.percent}%</td><td>{currency(allocation.amount)}</td></tr>)}</tbody></table></div><small>Finalized {distribution.finalizedAt?new Date(distribution.finalizedAt).toLocaleString('en-IN'):'—'} · Historical project snapshot</small>{canConfigure&&<DistributionCorrectionEditor distribution={distribution} founders={founders} onUpdate={updateDistribution} onReverse={reverseDistribution}/>}</>:isFullyPaid?<><p className="finance-hint">Final payment action completed. Deal amount: {currency(projectAmount)} · verified payments: {currency(project.paidAmount)} · remaining: {currency(Math.max(0,projectAmount-Number(project.paidAmount||0)))} · final payment: {currency(finalPayment?.amount||0)}. Complete the project-specific contribution and finalize it; the financial workflow remains pending until then.</p>{canConfigure&&<div className="project-distribution-editor"><label className="field">Company allocation (%)<input type="number" min="0" max="100" step="0.01" value={companyPercent} onChange={(event)=>setCompanyPercent(Number(event.target.value))}/></label><div className="distribution-pool-summary"><span>Founder pool</span><strong>{founderPoolPercent.toFixed(2)}% · {currency(projectAmount*founderPoolPercent/100)}</strong></div>{shares.map((share,index)=><div className="finance-share-row" key={`${share.userId}-${index}`}><label className="field">Founder<select value={share.userId||''} onChange={(event)=>setShares(shares.map((item,i)=>i===index?{...item,userId:event.target.value}:item))}><option value="">Select founder</option>{founders.map((founder)=><option key={founder.id} value={founder.id}>{founder.name}</option>)}</select></label><label className="field">Contribution (% of founder pool)<input type="number" min="0.01" max="100" step="0.01" value={share.percent} onChange={(event)=>setShares(shares.map((item,i)=>i===index?{...item,percent:Number(event.target.value)}:item))}/></label><span className="distribution-preview">{(founderPoolPercent*Number(share.percent||0)/100).toFixed(2)}% of project · {currency(projectAmount*founderPoolPercent*Number(share.percent||0)/10000)}</span><button className="button button-outline button-small" type="button" onClick={()=>setShares(shares.filter((_,i)=>i!==index))}>Remove</button></div>)}<div className="finance-rules-actions"><span className={balanced?'valid':'invalid'}>Company + founder pool = 100%. Founder contributions: {contributionTotal.toFixed(2)}% {companyPercent===100&&!shares.length?'':`of 100% required`}</span><button className="button button-outline button-small" type="button" onClick={()=>setShares([...shares,{userId:'',percent:0}])} disabled={companyPercent===100}>Add founder</button><button className="button button-outline button-small" type="button" disabled={busy||!balanced} onClick={save}>{busy?'Saving…':'Save project rules'}</button><button className="button button-primary button-small" type="button" disabled={busy||!balanced} onClick={finalizeNow}>{busy?'Working…':'Finalize distribution'}</button></div></div>}</>:<p className="finance-hint">A full verified payment is required before revenue can be allocated.</p>}
+  {distribution?<><div className="distribution-amount-summary"><div><span>Project revenue</span><strong>{currency(distribution.grossAmount)}</strong></div><div><span>Company · {distribution.companySharePercent}%</span><strong>{currency(distribution.companyAmount??distribution.allocations?.find((item)=>item.recipientType==='company')?.amount)}</strong></div><div><span>Founder pool · {distribution.founderPoolPercent??(100-distribution.companySharePercent)}%</span><strong>{currency(distribution.founderPoolAmount??distribution.allocations?.filter((item)=>item.recipientType==='founder').reduce((sum,item)=>sum+Number(item.amount||0),0))}</strong></div></div><div className="table-scroll"><table><thead><tr><th>Recipient</th><th>Contribution of founder pool</th><th>Effective project share</th><th>Final allocation</th></tr></thead><tbody>{(distribution.allocations||[]).map((allocation,index)=><tr key={`${allocation.founderId||allocation.recipientType}-${index}`}><td>{allocation.founderName}</td><td>{allocation.recipientType==='company'?'—':`${allocation.contributionPercentage??allocation.percent}%`}</td><td>{allocation.effectiveProjectPercentage??allocation.percent}%</td><td>{currency(allocation.amount)}</td></tr>)}</tbody></table></div><small>Finalized {distribution.finalizedAt?new Date(distribution.finalizedAt).toLocaleString('en-IN'):'—'} · Historical project snapshot</small>{canConfigure&&<DistributionCorrectionEditor distribution={distribution} founders={founders} onUpdate={updateDistribution} onReverse={reverseDistribution}/>}</>:isFullyPaid?<><p className="finance-hint">Verified payments: {currency(project.paidAmount)} · remaining: {currency(Math.max(0,projectAmount-Number(project.paidAmount||0)))} · final verified payment: {currency(finalPayment?.amount||0)}. Distribution eligibility is derived from verified project payments and remains pending until finalized.</p>{canConfigure&&<button className="button button-primary button-small" type="button" onClick={()=>setManuallyOpened(true)}>{dialogOpen?'Distribution window open':'Resume pending distribution'}</button>}</>:<p className="finance-hint">A full verified payment is required before revenue can be allocated.</p>}
+  {isFullyPaid&&canConfigure&&dialogOpen&&!distribution&&<div className="distribution-modal-backdrop" role="presentation" onMouseDown={(event)=>{if(event.target===event.currentTarget)closeDialog()}}>
+   <section className="distribution-modal-card" role="dialog" aria-modal="true" aria-labelledby="distribution-dialog-title">
+    <div className="panel-heading"><div><span className="eyebrow">FINAL PAYMENT VERIFIED · {project.projectCode||project.id}</span><h2 id="distribution-dialog-title">Project founder distribution</h2></div><button className="icon-button" type="button" onClick={closeDialog} aria-label="Close distribution dialog">×</button></div>
+    <p className="finance-hint">Project amount: {currency(projectAmount)} · verified collection: {currency(project.paidAmount)}. Founder percentages are contributions within the founder pool.</p>
+    <div className="project-distribution-editor">
+     <label className="field">Company allocation (% of project)<input type="number" min="0" max="100" step="0.01" value={companyPercent} onChange={(event)=>setCompanyPercent(event.target.value)}/></label>
+     <div className="distribution-pool-summary"><span>Founder pool</span><strong>{founderPoolPercent.toFixed(2)}% · {currency(projectAmount*founderPoolPercent/100)}</strong></div>
+     {shares.map((share,index)=><div className="finance-share-row" key={`${share.userId}-${index}`}><label className="field">Founder<select value={share.userId||''} onChange={(event)=>setShares(shares.map((item,i)=>i===index?{...item,userId:event.target.value}:item))}><option value="">Select founder</option>{founders.map((founder)=><option key={founder.id} value={founder.id}>{founder.name}</option>)}</select></label><label className="field">Contribution (% of founder pool)<input type="number" min="0.01" max="100" step="0.01" value={share.percent} onChange={(event)=>setShares(shares.map((item,i)=>i===index?{...item,percent:Number(event.target.value)}:item))}/></label><span className="distribution-preview">{(founderPoolPercent*Number(share.percent||0)/100).toFixed(2)}% of project · {currency(projectAmount*founderPoolPercent*Number(share.percent||0)/10000)}</span><button className="button button-outline button-small" type="button" onClick={()=>setShares(shares.filter((_,i)=>i!==index))}>Remove</button></div>)}
+     <div className="finance-rules-actions"><span className={balanced?'valid':'invalid'}>Company + founder pool = 100%. Founder contributions: {contributionTotal.toFixed(2)}% {companyValue===100&&!shares.length?'':'of 100% required'}</span><button className="button button-outline button-small" type="button" onClick={()=>setShares([...shares,{userId:'',percent:0}])} disabled={!Number.isFinite(companyValue)||companyValue===100}>Add founder</button><button className="button button-outline button-small" type="button" disabled={busy||!balanced} onClick={save}>{busy?'Saving…':'Save rules for later'}</button><button className="button button-primary button-small" type="button" disabled={busy||!balanced} onClick={finalizeNow}>{busy?'Saving…':'Save & finalize distribution'}</button></div>
+    </div>
+   </section>
+  </div>}
  </section>
 }
 function DistributionCorrectionEditor({distribution,founders,onUpdate,onReverse}){
@@ -162,7 +188,7 @@ function DistributionCorrectionEditor({distribution,founders,onUpdate,onReverse}
   if(reason===null)return
   if(reason.trim().length<3){window.alert('Enter a reason of at least 3 characters.');return}
   setBusy(true)
-  try{await onUpdate(distribution.id,{companySharePercent,founderShares:shares,reason:reason.trim()});setEditing(false)}
+  try{await onUpdate(distribution.id,{companySharePercent:companyPercent,founderShares:shares,reason:reason.trim()});setEditing(false)}
   catch(error){window.alert(error.message||'Distribution correction failed.')}
   finally{setBusy(false)}
  }

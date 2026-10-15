@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import mongoose from 'mongoose'
-import { Client, Communication, CreativeAsset, Deal, Expense, Invoice, Lead, Milestone, Notification, ProductIdea, Project, Revision, Service, Student, Task, Target, User, Activity } from '../../models/index.js'
+import { Client, Communication, CreativeAsset, Deal, Expense, Invoice, Lead, Milestone, Notification, Payment, ProductIdea, Project, Revision, Service, Student, Task, Target, User, Activity } from '../../models/index.js'
 import { recordActivity } from '../../utils/audit.js'
 import { paginationFromQuery, paginationMeta } from '../../utils/pagination.js'
 import { balanceFor, paymentStatusFor } from '../../utils/calculations.js'
@@ -28,7 +28,7 @@ export const resources = Object.freeze({
   clients: { Model: Client, roles: ['super_admin', 'admin', 'manager', 'sales', 'team_member', 'client'], searchable: ['name', 'businessName', 'email', 'industry', 'city'], writeFields: ['name', 'businessName', 'companyName', 'contactName', 'email', 'phone', 'alternatePhone', 'alternateContact', 'whatsappNumber', 'address', 'city', 'state', 'country', 'website', 'socialLinks', 'instagram', 'linkedin', 'industry', 'businessType', 'businessDescription', 'targetAudience', 'businessSize', 'leadDate', 'firstContactDate', 'lastContactDate', 'priority', 'serviceId', 'source', 'notes', 'status', 'assignedTeamMembers', 'tags', 'gstNumber', 'billingAddress', 'shippingAddress'], populate: ['assignedTeamMembers', 'serviceId'] },
   leads: { Model: Lead, roles: ['super_admin', 'admin', 'manager', 'sales', 'team_member'], searchable: ['name', 'email', 'companyName', 'status'], writeFields: ['name', 'contactName', 'email', 'phone', 'companyName', 'industry', 'city', 'serviceId', 'source', 'status', 'potentialValue', 'assignedTo', 'nextFollowUp', 'notes'], populate: ['serviceId', 'assignedTo', 'convertedClientId'] },
   deals: { Model: Deal, roles: ['super_admin', 'admin', 'manager', 'sales', 'finance'], searchable: ['title', 'status'], writeFields: ['leadId', 'clientId', 'serviceId', 'projectId', 'title', 'description', 'quotedAmount', 'agreedAmount', 'discount', 'advanceRequired', 'status', 'expectedCloseDate', 'assignedTo', 'notes'], populate: ['leadId', 'clientId', 'serviceId', 'projectId', 'assignedTo'] },
-  students: { Model: Student, roles: ['super_admin', 'admin', 'manager', 'mentor'], searchable: ['name', 'email', 'college', 'branch', 'status'], writeFields: ['name', 'email', 'phone', 'whatsapp', 'education', 'college', 'branch', 'year', 'learningGoals', 'skills', 'experienceLevel', 'interestedTechnologies', 'enrollmentDate', 'status', 'notes', 'assignedMentor', 'serviceId'], populate: ['assignedMentor'] },
+  students: { Model: Student, roles: ['super_admin', 'admin', 'manager', 'mentor', 'finance'], searchable: ['name', 'email', 'phone', 'courseName', 'college', 'branch', 'status'], writeFields: ['name', 'email', 'phone', 'whatsapp', 'education', 'college', 'branch', 'year', 'courseName', 'learningGoals', 'skills', 'experienceLevel', 'interestedTechnologies', 'enrollmentDate', 'status', 'notes', 'assignedMentor', 'serviceId', 'agreedAmount', 'sessionsRemaining'], populate: ['assignedMentor'] },
   services: { Model: Service, roles: ['super_admin', 'admin', 'manager', 'team_member', 'sales', 'client'], searchable: ['name', 'slug', 'category'], writeFields: ['name', 'slug', 'description', 'category', 'icon', 'isActive', 'displayOrder', 'features'], populate: [] },
   projects: { Model: Project, roles: ['super_admin', 'admin', 'manager', 'team_member', 'sales', 'developer', 'designer', 'mentor', 'finance', 'client'], searchable: ['projectName', 'status', 'priority'], writeFields: ['projectName', 'clientId', 'serviceId', 'dealId', 'description', 'businessGoal', 'problemStatement', 'expectedOutcome', 'requirements', 'expectedDeliverables', 'existingTechnology', 'serviceDetails', 'referenceLinks', 'projectType', 'repositoryUrl', 'liveUrl', 'hosting', 'domain', 'status', 'priority', 'startDate', 'deadline', 'completionDate', 'budget', 'quotedAmount', 'finalAmount', 'assignedTeamMembers', 'projectManager', 'tags', 'notes', 'internalNotes', 'clientVisibleNotes', 'progress'], populate: ['clientId', 'serviceId', 'dealId', 'assignedTeamMembers', 'projectManager'] },
   invoices: { Model: Invoice, roles: ['super_admin', 'admin', 'manager', 'finance', 'client'], searchable: ['invoiceCode', 'status'], writeFields: ['clientId', 'projectId', 'dealId', 'amount', 'currency', 'issueDate', 'dueDate', 'status', 'notes'], populate: ['clientId', 'projectId', 'dealId'] },
@@ -294,6 +294,18 @@ export async function create(key, input, user) {
   if (key === 'students') {
     payload.studentCode ||= `STU-${randomBytes(3).toString('hex').toUpperCase()}`
     payload.createdBy = actorId
+    if (!String(payload.name || '').trim() || !String(payload.courseName || '').trim() || payload.agreedAmount === undefined) {
+      throw Object.assign(new Error('Student name, course or learning track, and agreed enrollment fee are required.'), { statusCode: 400 })
+    }
+    const mentoringService = await Service.findOne({ slug: 'development-mentoring', isActive: true }).select('_id')
+    if (!mentoringService) throw Object.assign(new Error('The active Development Mentorship service must be configured before enrolling students.'), { statusCode: 409 })
+    if (payload.serviceId && !mentoringService._id.equals(payload.serviceId)) {
+      throw Object.assign(new Error('Students must be associated with the Development Mentorship service.'), { statusCode: 400 })
+    }
+    payload.serviceId = mentoringService._id
+    if (payload.agreedAmount !== undefined && (!Number.isFinite(Number(payload.agreedAmount)) || Number(payload.agreedAmount) < 0)) {
+      throw Object.assign(new Error('Agreed student fee must be a non-negative amount.'), { statusCode: 400 })
+    }
     mentoringRecipients = payload.assignedMentor ? [payload.assignedMentor] : await User.find({ portalType: 'team', isActive: true, role: { $in: ['super_admin', 'admin', 'manager'] } }).distinct('_id')
   }
   if (key === 'invoices') {
@@ -359,6 +371,28 @@ export async function update(key, id, input, user) {
   const previousStatus = current.status
   const changes = pickFields(input, config.writeFields)
   await validateTeamAssignments(key, changes)
+  let previousStudentFee
+  if (key === 'students' && changes.serviceId) {
+    const mentoringService = await Service.findOne({ slug: 'development-mentoring', isActive: true }).select('_id')
+    if (!mentoringService) throw Object.assign(new Error('The active Development Mentorship service must be configured before updating student enrollments.'), { statusCode: 409 })
+    if (!mentoringService._id.equals(changes.serviceId)) {
+      throw Object.assign(new Error('Students must remain associated with the Development Mentorship service.'), { statusCode: 400 })
+    }
+  }
+  if (key === 'students' && changes.agreedAmount !== undefined) {
+    const agreedAmount = Number(changes.agreedAmount)
+    if (!Number.isFinite(agreedAmount) || agreedAmount < 0) {
+      throw Object.assign(new Error('Agreed student fee must be a non-negative amount.'), { statusCode: 400 })
+    }
+    const [collected] = await Payment.aggregate([
+      { $match: { studentId: current._id, status: 'paid' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ])
+    if (agreedAmount < Number(collected?.total || 0)) {
+      throw Object.assign(new Error('The new agreed fee is below verified payments already collected. Resolve the overpayment explicitly before changing the fee.'), { statusCode: 409 })
+    }
+    previousStudentFee = Number(current.agreedAmount || 0)
+  }
   if (user.portalType === 'client') {
     const allowedClientFields = ['name', 'contactName', 'phone', 'alternatePhone', 'whatsappNumber', 'address', 'city', 'state', 'country', 'website', 'socialLinks']
     const allowedProjectFields = ['clientVisibleNotes']
@@ -437,6 +471,16 @@ export async function update(key, id, input, user) {
     }
   }
   await recordActivity({ actor: user._id, action: `${key}.updated`, entityType: key, entityId: current._id, clientId: current.clientId, projectId: key === 'projects' ? current._id : current.projectId, description: `${key.slice(0, -1)} updated.` })
+  if (key === 'students' && previousStudentFee !== undefined && previousStudentFee !== Number(current.agreedAmount || 0)) {
+    await recordActivity({
+      actor: user._id,
+      action: 'student.enrollment_fee.updated',
+      entityType: 'student',
+      entityId: current._id,
+      metadata: { oldValue: { agreedAmount: previousStudentFee }, newValue: { agreedAmount: Number(current.agreedAmount || 0) } },
+      description: `Agreed enrollment fee changed from ${previousStudentFee} to ${Number(current.agreedAmount || 0)}.`,
+    })
+  }
   return redactClientData(current, user, key)
 }
 

@@ -367,6 +367,10 @@ async function recordPaymentLocked(input, user) {
     student = await Student.findById(input.studentId)
     if (!student) throw Object.assign(new Error('Mentoring student not found.'), { statusCode: 404 })
   }
+  if (student && (input.projectId || input.dealId || input.invoiceId || input.clientId)) {
+    throw Object.assign(new Error('Mentorship payments must belong only to a student and must not be linked to project, deal, invoice, or client records.'), { statusCode: 400 })
+  }
+  if (student) input = { ...input, paymentType: 'mentoring_fee' }
   const associatedClientId = project?.clientId || deal?.clientId || invoice?.clientId || student?.clientId
   if (clientId && associatedClientId && !associatedClientId.equals(clientId)) throw Object.assign(new Error('The selected records do not belong to the specified client.'), { statusCode: 400 })
   if (!clientId && associatedClientId) clientId = associatedClientId
@@ -378,10 +382,11 @@ async function recordPaymentLocked(input, user) {
   if (serviceId && !await Service.exists({ _id: serviceId })) throw Object.assign(new Error('Service not found.'), { statusCode: 404 })
   const cashPayment = input.paymentMethod === 'cash'
   const clientSubmission = user.portalType === 'client'
+  const cashRequiresApproval = cashPayment && !clientSubmission && !student
   const explicitStatus = String(input.status || '').toLowerCase()
   const status = clientSubmission
     ? 'submitted'
-    : cashPayment
+    : cashRequiresApproval
       ? 'under_verification'
       : explicitStatus === 'refunded'
         ? 'refunded'
@@ -426,17 +431,17 @@ async function recordPaymentLocked(input, user) {
     invoiceId: invoice?._id || input.invoiceId,
     serviceId,
     status,
-    verificationStatus: clientSubmission ? 'submitted' : cashPayment ? 'awaiting_second_approval' : 'not_required',
+    verificationStatus: clientSubmission ? 'submitted' : cashRequiresApproval ? 'awaiting_second_approval' : 'not_required',
     paymentCode: `PAY-${randomBytes(4).toString('hex').toUpperCase()}`,
     recordedBy: user._id,
     submittedBy: user._id,
     submittedAt: new Date(),
     createdBy: user._id,
     paymentHistory: [{
-      action: cashPayment && !clientSubmission ? 'cash_recorded_awaiting_approval' : clientSubmission ? 'client_payment_submitted' : 'payment_recorded',
+      action: cashRequiresApproval ? 'cash_recorded_awaiting_approval' : clientSubmission ? 'client_payment_submitted' : 'payment_recorded',
       actor: user._id,
       status,
-      note: cashPayment && !clientSubmission ? 'A different authorized team member must approve this cash payment.' : undefined,
+      note: cashRequiresApproval ? 'A different authorized team member must approve this project cash payment.' : undefined,
     }],
   })
   try {
@@ -485,6 +490,38 @@ async function updatePaymentLocked(id, changes, user, { allowWorkflowTransition 
   if (!payment) throw Object.assign(new Error('Payment not found.'), { statusCode: 404 })
   if (user.portalType === 'client') throw Object.assign(new Error('Clients cannot edit payment records.'), { statusCode: 403 })
   const old = payment.toObject()
+  if (changes.amount !== undefined) {
+    const amount = Number(changes.amount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw Object.assign(new Error('Corrected payment amount must be a positive number.'), { statusCode: 400 })
+    }
+    if (amount !== Number(payment.amount) && String(changes.notes || '').trim().length < 3) {
+      throw Object.assign(new Error('A correction reason of at least 3 characters is required when changing a payment amount.'), { statusCode: 400 })
+    }
+    if (payment.studentId && payment.status === 'paid') {
+      const [otherPayments] = await Payment.aggregate([
+        { $match: { studentId: payment.studentId, status: 'paid', _id: { $ne: payment._id } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } },
+      ])
+      const student = await Student.findById(payment.studentId).select('agreedAmount')
+      if (student && Number(otherPayments?.total || 0) + amount > Number(student.agreedAmount || 0)) {
+        throw Object.assign(new Error('Corrected payment would exceed the student’s agreed enrollment fee.'), { statusCode: 409 })
+      }
+    }
+    if (payment.projectId && payment.status === 'paid') {
+      const finalized = await RevenueDistribution.exists({ projectId: payment.projectId, entryType: 'receipt' })
+      if (finalized) throw Object.assign(new Error('A payment linked to a finalized project distribution requires a controlled financial reversal.'), { statusCode: 409 })
+      const [otherPayments] = await Payment.aggregate([
+        { $match: { projectId: payment.projectId, status: 'paid', _id: { $ne: payment._id } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } },
+      ])
+      const project = await Project.findById(payment.projectId)
+      const amountDue = Number(project?.finalAmount ?? project?.quotedAmount ?? project?.budget ?? 0)
+      if (amountDue > 0 && Number(otherPayments?.total || 0) + amount > amountDue) {
+        throw Object.assign(new Error('Corrected payment would exceed the remaining project balance.'), { statusCode: 409 })
+      }
+    }
+  }
   if (changes.status && changes.status !== payment.status && !allowWorkflowTransition) {
     throw Object.assign(new Error('Payment status changes must use the verification or cash-approval workflow.'), { statusCode: 409 })
   }
@@ -492,8 +529,9 @@ async function updatePaymentLocked(id, changes, user, { allowWorkflowTransition 
     const finalized = await RevenueDistribution.exists({ projectId: payment.projectId, entryType: 'receipt' })
     if (finalized) throw Object.assign(new Error('A payment linked to a finalized project distribution requires a controlled financial reversal.'), { statusCode: 409 })
   }
-  for (const field of ['status', 'paymentMethod', 'transactionId', 'paymentDate', 'dueDate', 'notes']) if (changes[field] !== undefined) payment[field] = changes[field]
-  if (payment.status !== old.status) payment.financeRevision = Number(payment.financeRevision || 0) + 1
+  for (const field of ['amount', 'status', 'paymentMethod', 'transactionId', 'paymentDate', 'dueDate', 'notes']) if (changes[field] !== undefined) payment[field] = field === 'amount' ? Number(changes[field]) : changes[field]
+  const amountChanged = changes.amount !== undefined && Number(changes.amount) !== Number(old.amount)
+  if (payment.status !== old.status || amountChanged) payment.financeRevision = Number(payment.financeRevision || 0) + 1
   payment.updatedBy = user._id
   if (payment.status === 'paid' && !payment.paymentDate) payment.paymentDate = new Date()
   if (payment.status === 'paid' && old.status !== 'paid') {
@@ -529,7 +567,13 @@ async function updatePaymentLocked(id, changes, user, { allowWorkflowTransition 
       after: financialSnapshot(payment),
       reason: changes.notes,
     })
-    payment.paymentHistory.push({ action: 'payment_updated', actor: user._id, previousStatus: old.status, status: payment.status, note: changes.notes })
+    payment.paymentHistory.push({
+      action: amountChanged ? 'payment_amount_corrected' : 'payment_updated',
+      actor: user._id,
+      previousStatus: old.status,
+      status: payment.status,
+      note: amountChanged ? `Amount corrected from ${old.amount} to ${payment.amount}. ${String(changes.notes || '').trim()}` : changes.notes,
+    })
     await payment.save()
     await recordActivity({ actor: user._id, action: 'payment.updated', entityType: 'payment', entityId: payment._id, clientId: payment.clientId, projectId: payment.projectId, metadata: { oldValue: { amount: old.amount, status: old.status, paymentMethod: old.paymentMethod }, newValue: { amount: payment.amount, status: payment.status, paymentMethod: payment.paymentMethod } }, description: `Payment ${payment.paymentCode} updated.` })
     if (old.status !== payment.status && payment.clientId) {

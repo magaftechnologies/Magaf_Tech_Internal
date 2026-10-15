@@ -148,6 +148,7 @@ export function normalizeRecord(collection, record) {
     assignedMentor: nameOf(normalized.assignedMentor),
     mentorId: idOf(normalized.assignedMentor),
     goal: normalized.learningGoals,
+    mentor: nameOf(normalized.assignedMentor),
     topics: (normalized.interestedTechnologies || []).join(', '),
     status: textStatus(normalized.status),
   }
@@ -375,11 +376,18 @@ export function serializeRecord(collection, values, data = {}) {
   }
   if (collection === 'students') {
     payload.learningGoals = payload.learningGoals || payload.goal
+    payload.education = payload.education || payload.degree
+    payload.experienceLevel = payload.experienceLevel || payload.level
     payload.interestedTechnologies = Array.isArray(payload.interestedTechnologies) ? payload.interestedTechnologies : String(payload.topics || '').split(',').map((item) => item.trim()).filter(Boolean)
-    payload.assignedMentor = assignedId(payload.assignedMentor || payload.mentor)
+    if (Object.hasOwn(payload, 'mentorId')) {
+      payload.assignedMentor = payload.mentorId === null ? null : assignedId(payload.mentorId)
+    } else if (Object.hasOwn(payload, 'assignedMentor') || Object.hasOwn(payload, 'mentor')) {
+      payload.assignedMentor = assignedId(payload.assignedMentor || payload.mentor)
+    }
     payload.serviceId ||= data.services?.find((service) => service.legacyKey === 'mentoring')?.id
     delete payload.goal
     delete payload.topics
+    delete payload.mentorId
     delete payload.mentor
   }
   if (collection === 'mentoringSessions') {

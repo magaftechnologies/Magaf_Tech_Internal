@@ -132,9 +132,9 @@ export function DataProvider({ children }) {
           addLoad('targets', targetsApi.getTargets())
         }
         if (allowed(role, ['super_admin', 'admin'])) addLoad('users', usersApi.getAll())
-        if (allowed(role, ['super_admin', 'admin', 'manager', 'mentor'])) {
+        if (allowed(role, ['super_admin', 'admin', 'manager', 'mentor', 'finance'])) {
           addLoad('students', mentoringStudentsApi.getAll())
-          addLoad('mentoringSessions', mentoringSessionsApi.getAll())
+          if (allowed(role, ['super_admin', 'admin', 'manager', 'mentor'])) addLoad('mentoringSessions', mentoringSessionsApi.getAll())
         }
         if (allowed(role, ['super_admin', 'admin', 'manager', 'team_member', 'developer', 'designer', 'mentor'])) addLoad('tasks', tasksApi.getAll())
         if (allowed(role, ['super_admin', 'admin', 'manager', 'team_member', 'developer', 'designer'])) {

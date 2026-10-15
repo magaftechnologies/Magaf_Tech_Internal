@@ -202,7 +202,7 @@ async function updateDistributionRulesLocked(projectId, input, user) {
     metadata: { oldValue: before, newValue: after },
     description: `Revenue allocation rules updated for ${project.projectName}.`,
   })
-  return project
+  return Project.findById(project._id).populate('founderShares.userId', 'name role portalType isActive')
 }
 
 export async function updateDistributionRules(projectId, input, user) {
@@ -224,7 +224,13 @@ async function finalizeProjectDistributionLocked(projectId, user) {
   if (Math.round(Number(verified?.total || 0) * 100) < Math.round(totalProjectAmount * 100)) {
     throw Object.assign(new Error('Revenue distribution is unavailable until the project is fully paid and verified.'), { statusCode: 409 })
   }
-  const companyPercent = Number(project.companySharePercent ?? 100)
+  if (project.companySharePercent === undefined || project.companySharePercent === null) {
+    throw Object.assign(new Error('Set an explicit company allocation before finalizing the project distribution.'), { statusCode: 409 })
+  }
+  const companyPercent = Number(project.companySharePercent)
+  if (!Number.isFinite(companyPercent) || companyPercent < 0 || companyPercent > 100) {
+    throw Object.assign(new Error('The saved company allocation is invalid. Update the project distribution rules.'), { statusCode: 409 })
+  }
   const founderShares = project.founderShares || []
   const founderShareTotal = founderShares.reduce((sum, share) => sum + Number(share.percent), 0)
   if ((companyPercent < 100 && Math.abs(founderShareTotal - 100) > 0.001)

@@ -51,7 +51,18 @@
 .client-payment-instructions>div{margin-bottom:1px}
 .client-payment-instructions article{display:grid;gap:4px;padding:12px 14px;border:1px solid #e4e9f0;border-radius:9px;background:#fafbfd}
 .client-payment-instructions article span,.client-payment-instructions article small,.client-payment-instructions article p{margin:0;color:#647287;font-size:12px}
+.distribution-modal-backdrop{position:fixed;inset:0;z-index:120;display:grid;place-items:center;padding:22px;background:#15223899}
+.distribution-modal-card{width:min(820px,100%);max-height:min(88vh,900px);overflow:auto;padding:22px;border:1px solid #e1e6ef;border-radius:14px;background:#fff;box-shadow:0 22px 70px #11182744}
+.distribution-modal-card .panel-heading{position:sticky;top:-22px;z-index:1;margin:-22px -22px 14px;padding:18px 22px;background:#fff;border-bottom:1px solid #e8edf3}
+.distribution-modal-card .project-distribution-editor{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.distribution-modal-card .project-distribution-editor>.field{margin:0}
+.distribution-pool-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid #e4e9f0;border-radius:8px;background:#fafbfd;color:#526071;font-size:13px}
+.distribution-pool-summary strong{color:#26354a}
+.distribution-preview{color:#526071;font-size:12px}
+.icon-button{display:grid;place-items:center;width:34px;height:34px;border:1px solid #e1e6ef;border-radius:8px;background:#fff;color:#526071;font-size:22px;line-height:1;cursor:pointer}
+.icon-button:hover{background:#f4f6f9}
 @media(max-width:720px){.finance-rules-editor{grid-template-columns:1fr}.finance-share-row{grid-template-columns:1fr 1fr}.finance-share-row>.button{grid-column:2;justify-self:end}.finance-rules-actions>span{width:100%}.finance-account-card{flex-direction:column}.finance-account-actions{align-self:flex-end}}
+@media(max-width:720px){.distribution-modal-backdrop{padding:10px}.distribution-modal-card{max-height:94vh;padding:16px}.distribution-modal-card .panel-heading{top:-16px;margin:-16px -16px 12px;padding:14px 16px}.distribution-modal-card .project-distribution-editor{grid-template-columns:1fr}.distribution-modal-card .finance-share-row{grid-template-columns:1fr}.distribution-preview{grid-column:1}.distribution-modal-card .finance-share-row>.button{grid-column:1;justify-self:start}}
 @media(max-width:720px){.login-screen.password-required .login-main{padding:20px}.api-error-banner{bottom:10px}}
 
 /* Keep supporting text comfortable to read without changing the established font families. */

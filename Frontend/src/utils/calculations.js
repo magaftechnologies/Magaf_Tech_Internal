@@ -1,9 +1,9 @@
 import { getServiceCapabilities } from '../services/serviceRegistry'
 
-export const paymentValue = (payment) => payment.type === 'Refund' || payment.status === 'Refunded'
-  ? -Math.abs(Number(payment.amount || 0))
-  : Number(payment.amount || 0)
-//
+export const paymentValue = (payment) => {
+  if (payment.status === 'Refunded' || payment.type === 'Refund') return -Math.abs(Number(payment.amount || 0))
+  return payment.status === 'Paid' || payment.status === 'paid' ? Number(payment.amount || 0) : 0
+}
 export const clientProjects = (data, clientId) => data.projects.filter((project) => project.clientId === clientId)
 
 export const projectPayments = (data, project) => data.payments.filter((payment) =>
@@ -65,7 +65,7 @@ export const paymentServiceId = (data, payment) => {
 
 export const studentPaid = (data, student) => {
   const entries=data.payments.filter((payment)=>payment.studentId===student.id)
-  return Math.max(0,entries.length?entries.reduce((sum,payment)=>sum+paymentValue(payment),0):Number(student.paidAmount||0))
+  return Math.max(0,entries.reduce((sum,payment)=>sum+paymentValue(payment),0))
 }
 
 export const studentBalance = (data, student) => Math.max(0,Number(student.agreedAmount||0)-studentPaid(data,student))
