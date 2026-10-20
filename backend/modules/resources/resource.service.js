@@ -6,6 +6,7 @@ import { recordActivity } from '../../utils/audit.js'
 import { paginationFromQuery, paginationMeta } from '../../utils/pagination.js'
 import { balanceFor, paymentStatusFor } from '../../utils/calculations.js'
 import { ROLES, ROLES_WITH_ALL_ACCESS } from '../../utils/constants.js'
+import { withProjectFinanceLock } from '../finance/finance.service.js'
 
 const projectStatusTransitions = {
   draft: ['requested', 'planning', 'cancelled'],
@@ -13,8 +14,9 @@ const projectStatusTransitions = {
   pending_review: ['accepted', 'rejected', 'cancelled'],
   accepted: ['planning', 'cancelled'],
   planning: ['in_progress', 'on_hold', 'cancelled'],
-  in_progress: ['review', 'on_hold', 'cancelled'],
-  review: ['revision', 'delivered', 'in_progress', 'cancelled'],
+  in_progress: ['review', 'approved', 'on_hold', 'cancelled'],
+  review: ['approved', 'revision', 'delivered', 'completed', 'in_progress', 'cancelled'],
+  approved: ['delivered', 'completed', 'revision', 'cancelled'],
   revision: ['in_progress', 'review', 'on_hold', 'cancelled'],
   on_hold: ['planning', 'in_progress', 'cancelled'],
   delivered: ['completed', 'revision'],
@@ -230,6 +232,8 @@ export async function create(key, input, user) {
     payload.portalType = payload.portalType || 'team'
     if (payload.portalType !== 'team' || payload.role === 'client') throw Object.assign(new Error('Team accounts must use the team portal and a team role.'), { statusCode: 400 })
     if (user.role !== 'super_admin' && ['super_admin', 'admin'].includes(payload.role)) throw Object.assign(new Error('Only a super administrator can create administrator accounts.'), { statusCode: 403 })
+    payload.mustChangePassword = true
+    payload.temporaryPasswordExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
     delete payload.password
   }
   if (key === 'clients') {
@@ -327,6 +331,7 @@ export async function create(key, input, user) {
         portalType: 'client',
         clientId: client._id,
         mustChangePassword: true,
+        temporaryPasswordExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         isActive: true,
       })
       client.userId = portalUser._id
@@ -364,7 +369,7 @@ export async function create(key, input, user) {
   return created
 }
 
-export async function update(key, id, input, user) {
+async function updateRecord(key, id, input, user) {
   const config = resources[key]
   const current = await config.Model.findOne({ _id: id, ...await clientFilter(user, key), ...(key === 'users' ? { portalType: 'team', role: { $in: internalRoles } } : {}) })
   if (!current) throw Object.assign(new Error('Record not found.'), { statusCode: 404 })
@@ -405,27 +410,89 @@ export async function update(key, id, input, user) {
     delete changes.paidAmount
     delete changes.balanceAmount
     delete changes.paymentStatus
+    const targetClientId = changes.clientId ?? current.clientId
+    const targetServiceId = changes.serviceId ?? current.serviceId
+    if (changes.clientId !== undefined && !await Client.exists({ _id: targetClientId })) {
+      throw Object.assign(new Error('The selected project client does not exist.'), { statusCode: 400 })
+    }
+    if (changes.serviceId !== undefined && !await Service.exists({ _id: targetServiceId, isActive: true })) {
+      throw Object.assign(new Error('The selected project service is not active.'), { statusCode: 400 })
+    }
+    if (changes.dealId) {
+      const deal = await Deal.findOne({ _id: changes.dealId, clientId: targetClientId, serviceId: targetServiceId })
+      if (!deal) throw Object.assign(new Error('The selected deal must belong to the project client and service.'), { statusCode: 400 })
+    } else if ((changes.clientId !== undefined || changes.serviceId !== undefined) && current.dealId) {
+      const deal = await Deal.findOne({ _id: current.dealId, clientId: targetClientId, serviceId: targetServiceId })
+      if (!deal) throw Object.assign(new Error('Update or remove the linked deal before changing the project client or service.'), { statusCode: 409 })
+    }
     if (changes.status && changes.status !== previousStatus && !projectStatusTransitions[previousStatus]?.includes(changes.status)) {
       throw Object.assign(new Error(`Project status cannot transition from ${previousStatus} to ${changes.status}.`), { statusCode: 409 })
     }
+    if (changes.status && changes.status !== previousStatus && user.portalType === 'client') {
+      throw Object.assign(new Error('Clients approve shared deliverables through the deliverables review workflow; project lifecycle status is managed by the team.'), { statusCode: 403 })
+    }
+    if (changes.status && changes.status !== previousStatus
+      && !['super_admin', 'admin', 'manager'].includes(user.role)
+      && !current.projectManager?.equals(user._id)
+      && !current.assignedTeamMembers.some((memberId) => memberId.equals(user._id))) {
+      throw Object.assign(new Error('Only a project manager, assigned team member, or authorized manager can change this project status.'), { statusCode: 403 })
+    }
     if (changes.status === 'completed') changes.completionDate = new Date()
     if (changes.finalAmount !== undefined) {
-      if (Number(changes.finalAmount) < Number(current.paidAmount || 0)) throw Object.assign(new Error('finalAmount cannot be lower than payments already received.'), { statusCode: 409 })
-      changes.paidAmount = current.paidAmount
-      changes.balanceAmount = balanceFor(changes.finalAmount, current.paidAmount)
-      changes.paymentStatus = paymentStatusFor(changes.finalAmount, current.paidAmount)
+      if (changes.finalAmount === '' || changes.finalAmount === null) {
+        throw Object.assign(new Error('Agreed amount must be a non-negative number.'), { statusCode: 400 })
+      }
+      const agreedAmount = Number(changes.finalAmount)
+      if (!Number.isFinite(agreedAmount) || agreedAmount < 0) {
+        throw Object.assign(new Error('Agreed amount must be a non-negative number.'), { statusCode: 400 })
+      }
+      const [confirmedPayments] = await Payment.aggregate([
+        { $match: { projectId: current._id, status: 'paid' } },
+        { $group: { _id: null, total: { $sum: '$amount' } } },
+      ])
+      const confirmedTotal = Number(confirmedPayments?.total || 0)
+      if (Math.round(agreedAmount * 100) < Math.round(confirmedTotal * 100)) {
+        const formattedTotal = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(confirmedTotal)
+        throw Object.assign(new Error(`Agreed amount cannot be lower than the total confirmed payments of ${formattedTotal}.`), { statusCode: 409 })
+      }
+      changes.finalAmount = agreedAmount
+      changes.paidAmount = confirmedTotal
+      changes.balanceAmount = balanceFor(agreedAmount, confirmedTotal)
+      changes.paymentStatus = paymentStatusFor(agreedAmount, confirmedTotal)
     }
   }
   if (key === 'tasks' && changes.status === 'completed') changes.completedAt = new Date()
   if (key === 'users') {
+    if (current.role === 'super_admin' && user.role !== 'super_admin') {
+      throw Object.assign(new Error('Only a super administrator can edit a super administrator account.'), { statusCode: 403 })
+    }
+    if (user.role !== 'super_admin' && current.role === 'admin') {
+      const protectedFieldsChanged = changes.role !== undefined && changes.role !== current.role
+        || changes.portalType !== undefined && changes.portalType !== current.portalType
+        || changes.permissions !== undefined && JSON.stringify(changes.permissions) !== JSON.stringify(current.permissions)
+        || changes.isActive !== undefined && changes.isActive !== current.isActive
+        || changes.password !== undefined
+      if (protectedFieldsChanged) {
+        throw Object.assign(new Error('Only a super administrator can change administrator access or account status.'), { statusCode: 403 })
+      }
+    }
     if (changes.email) changes.email = changes.email.toLowerCase()
+    if (changes.email && changes.email !== current.email && await User.exists({ email: changes.email, _id: { $ne: current._id } })) {
+      throw Object.assign(new Error('An account with this email address already exists.'), { statusCode: 409 })
+    }
     if (changes.password) {
       if (changes.password.length < 10) throw Object.assign(new Error('A password of at least 10 characters is required.'), { statusCode: 400 })
       changes.passwordHash = await bcrypt.hash(changes.password, 12)
+      changes.mustChangePassword = true
+      changes.temporaryPasswordExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
+      changes.temporaryPasswordUsedAt = undefined
+      current.tokenVersion += 1
       delete changes.password
     }
     if (changes.role === 'client' || changes.portalType === 'client') throw Object.assign(new Error('Client accounts are created through client registration.'), { statusCode: 400 })
-    if (user.role !== 'super_admin' && ['super_admin', 'admin'].includes(changes.role)) throw Object.assign(new Error('Only a super administrator can assign administrator roles.'), { statusCode: 403 })
+    if (user.role !== 'super_admin' && changes.role !== undefined && changes.role !== current.role && ['super_admin', 'admin'].includes(changes.role)) {
+      throw Object.assign(new Error('Only a super administrator can assign administrator roles.'), { statusCode: 403 })
+    }
   }
   let acceptedDealProject
   if (key === 'deals' && changes.status === 'accepted' && !current.projectId) {
@@ -470,7 +537,18 @@ export async function update(key, id, input, user) {
       })
     }
   }
-  await recordActivity({ actor: user._id, action: `${key}.updated`, entityType: key, entityId: current._id, clientId: current.clientId, projectId: key === 'projects' ? current._id : current.projectId, description: `${key.slice(0, -1)} updated.` })
+  await recordActivity({
+    actor: user._id,
+    action: `${key}.updated`,
+    entityType: key,
+    entityId: current._id,
+    clientId: current.clientId,
+    projectId: key === 'projects' ? current._id : current.projectId,
+    metadata: key === 'projects' && changes.status && changes.status !== previousStatus
+      ? { oldValue: { status: previousStatus }, newValue: { status: changes.status } }
+      : undefined,
+    description: `${key.slice(0, -1)} updated.`,
+  })
   if (key === 'students' && previousStudentFee !== undefined && previousStudentFee !== Number(current.agreedAmount || 0)) {
     await recordActivity({
       actor: user._id,
@@ -482,6 +560,11 @@ export async function update(key, id, input, user) {
     })
   }
   return redactClientData(current, user, key)
+}
+
+export async function update(key, id, input, user) {
+  if (key === 'projects') return withProjectFinanceLock(id, () => updateRecord(key, id, input, user))
+  return updateRecord(key, id, input, user)
 }
 
 export async function remove(key, id, user) {
@@ -512,6 +595,6 @@ export function writeRolesFor(key) {
 
 export async function listTeamMembers() {
   return User.find({ portalType: 'team', role: { $in: internalRoles }, isActive: true })
-    .select('name role department designation profileImage')
+    .select('name role department designation profileImage isActive')
     .sort({ name: 1 })
 }

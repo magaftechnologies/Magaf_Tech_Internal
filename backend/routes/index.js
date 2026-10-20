@@ -12,6 +12,7 @@ import targetRoutes from '../modules/targets/target.routes.js'
 import serviceWorkRoutes from '../modules/serviceWork/serviceWork.routes.js'
 import leadRoutes from '../modules/leads/lead.routes.js'
 import financeRoutes from '../modules/finance/finance.routes.js'
+import discussionRoutes from '../modules/discussions/discussion.routes.js'
 
 const router = Router()
 router.use('/auth', authRoutes)
@@ -19,6 +20,7 @@ router.use('/project-requests', requestRoutes)
 router.use('/leads', leadRoutes)
 router.use('/payments', paymentRoutes)
 router.use('/finance', financeRoutes)
+router.use('/discussions', discussionRoutes)
 router.use('/files', fileRoutes)
 router.use(communicationRoutes)
 router.use('/analytics', analyticsRoutes)

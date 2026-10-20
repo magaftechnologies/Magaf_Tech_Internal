@@ -1,6 +1,6 @@
 export const ROLES = Object.freeze(['super_admin', 'admin', 'team_member', 'manager', 'sales', 'developer', 'designer', 'mentor', 'finance', 'client'])
 export const CLIENT_STATUSES = Object.freeze(['lead', 'contacted', 'discussion', 'proposal_sent', 'negotiation', 'active', 'inactive', 'completed', 'lost'])
-export const PROJECT_STATUSES = Object.freeze(['draft', 'requested', 'pending_review', 'accepted', 'rejected', 'planning', 'in_progress', 'review', 'revision', 'completed', 'delivered', 'cancelled', 'on_hold'])
+export const PROJECT_STATUSES = Object.freeze(['draft', 'requested', 'pending_review', 'accepted', 'rejected', 'planning', 'in_progress', 'review', 'approved', 'revision', 'completed', 'delivered', 'cancelled', 'on_hold'])
 export const REQUEST_STATUSES = Object.freeze(['submitted', 'under_review', 'need_more_information', 'quoted', 'accepted', 'rejected', 'converted_to_project', 'cancelled'])
 export const PAYMENT_STATUSES = Object.freeze(['pending', 'submitted', 'under_verification', 'partially_paid', 'paid', 'rejected', 'correction_requested', 'disputed', 'failed', 'refunded', 'cancelled'])
 export const FILE_VISIBILITIES = Object.freeze(['internal', 'client', 'public_if_required'])

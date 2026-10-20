@@ -6,7 +6,7 @@ export const loginRules = [
 ]
 
 export const changePasswordRules = [
-  body('currentPassword').isString().isLength({ min: 6, max: 128 }),
+  body('currentPassword').optional().isString().isLength({ min: 6, max: 128 }),
   body('newPassword').isString().isLength({ min: 10, max: 128 }),
 ]
 

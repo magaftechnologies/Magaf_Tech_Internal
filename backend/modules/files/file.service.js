@@ -3,11 +3,13 @@ import path from 'node:path'
 import { v2 as cloudinary } from 'cloudinary'
 import { cloudinary as configuredCloudinary } from '../../config/cloudinary.js'
 import { env } from '../../config/environment.js'
-import { Client, FileAsset, Notification, Payment, Project, ProjectRequest, Service, User } from '../../models/index.js'
+import { Client, Conversation, Discussion, FileAsset, Notification, Payment, Project, ProjectRequest, Service, User } from '../../models/index.js'
 import { recordActivity } from '../../utils/audit.js'
 
 const resourceTypeFor = (mime) => mime.startsWith('image/') ? 'image' : mime.startsWith('video/') || mime.startsWith('audio/') ? 'video' : 'raw'
 const folderFor = (file) => {
+  if (file.conversationId) return `magaf/conversations/${file.conversationId}`
+  if (file.discussionId) return `magaf/discussions/${file.discussionId}`
   if (file.projectId) return `magaf/projects/${file.projectId}`
   if (file.projectRequestId) return `magaf/project-requests/${file.projectRequestId}`
   if (file.ownerType === 'student') return `magaf/mentoring/${file.ownerId}`
@@ -29,12 +31,13 @@ function uploadName(file, category, index) {
   return `MAGAF_Payment_Proof_${day}_v${index + 1}${extension}`
 }
 
-async function uploadBuffer(file, folder, fileName) {
+async function uploadBuffer(file, folder, fileName, isPrivate = false) {
   if (!env.cloudinaryConfigured) throw Object.assign(new Error('Cloudinary is not configured. Set the Cloudinary environment variables before uploading files.'), { statusCode: 503 })
   return new Promise((resolve, reject) => {
     const stream = configuredCloudinary.uploader.upload_stream({
       folder,
       resource_type: resourceTypeFor(file.mimetype),
+      ...(isPrivate ? { type: 'authenticated' } : {}),
       filename_override: fileName,
       use_filename: true,
       unique_filename: true,
@@ -69,6 +72,23 @@ async function syncPaymentProofStatuses(files) {
 }
 
 async function linkedEntities(input, user) {
+  if (input.conversationId) {
+    const conversation = await Conversation.findById(input.conversationId)
+    const isParticipant = conversation?.participants.some((participant) => participant.userId.equals(user._id))
+    if (!conversation || conversation.conversationType !== 'internal' || user.portalType !== 'team' || !isParticipant) {
+      throw Object.assign(new Error('Internal conversation not found or access denied.'), { statusCode: 404 })
+    }
+    return { conversation, clientId: undefined }
+  }
+  if (input.discussionId) {
+    const discussion = await Discussion.findById(input.discussionId)
+    const authorized = discussion && user.portalType === 'team' && (
+      ['super_admin', 'admin'].includes(user.role)
+      || discussion.participants.some((participant) => participant.equals(user._id))
+    )
+    if (!authorized) throw Object.assign(new Error('Discussion not found or access denied.'), { statusCode: 404 })
+    return { discussion, clientId: undefined }
+  }
   const clientId = user.portalType === 'client' ? user.clientId : input.clientId
   let project = null
   let request = null
@@ -95,8 +115,9 @@ export async function uploadFiles(files, input, user) {
     for (const [index, file] of files.entries()) {
       const folder = folderFor({ ...entities, ownerType: user.portalType === 'client' ? 'client' : 'team', ownerId: user._id })
       const normalizedName = uploadName(file, input.category, index)
-      const result = await uploadBuffer(file, folder, normalizedName)
-      cloudinaryObjects.push({ publicId: result.public_id, resourceType: result.resource_type })
+      const isPrivate = Boolean(entities.conversation || entities.discussion)
+      const result = await uploadBuffer(file, folder, normalizedName, isPrivate)
+      cloudinaryObjects.push({ publicId: result.public_id, resourceType: result.resource_type, isPrivate })
       const visibility = input.visibility && user.portalType === 'team' ? input.visibility : user.portalType === 'client' ? 'client' : 'internal'
       const record = await FileAsset.create({
         fileCode: `FILE-${randomBytes(3).toString('hex').toUpperCase()}`,
@@ -104,6 +125,8 @@ export async function uploadFiles(files, input, user) {
         ownerId: user._id,
         projectId: entities.project?._id,
         projectRequestId: entities.request?._id,
+        conversationId: entities.conversation?._id,
+        discussionId: entities.discussion?._id,
         clientId: entities.clientId,
         serviceId: entities.project?.serviceId || entities.request?.serviceId,
         uploadedBy: user._id,
@@ -114,7 +137,14 @@ export async function uploadFiles(files, input, user) {
         fileName: input.category === 'payment_proof' ? normalizedName : result.original_filename || file.originalname,
         originalName: file.originalname,
         cloudinaryPublicId: result.public_id,
-        cloudinaryUrl: result.secure_url,
+        cloudinaryUrl: isPrivate
+          ? configuredCloudinary.url(result.public_id, {
+            resource_type: result.resource_type,
+            type: 'authenticated',
+            sign_url: true,
+            secure: true,
+          })
+          : result.secure_url,
         resourceType: result.resource_type,
         size: result.bytes,
         folder,
@@ -125,7 +155,10 @@ export async function uploadFiles(files, input, user) {
     }
   } catch (error) {
     await Promise.all(uploaded.map((record) => record.deleteOne()))
-    await Promise.all(cloudinaryObjects.map(({ publicId, resourceType }) => configuredCloudinary.uploader.destroy(publicId, { resource_type: resourceType })))
+    await Promise.all(cloudinaryObjects.map(({ publicId, resourceType, isPrivate }) => configuredCloudinary.uploader.destroy(publicId, {
+      resource_type: resourceType,
+      ...(isPrivate ? { type: 'authenticated' } : {}),
+    })))
     throw error
   }
   for (const record of uploaded) {
@@ -176,8 +209,30 @@ export async function createExternalLink(input, user) {
   return record
 }
 
+async function assertPrivateAttachmentAccess(file, user) {
+  if (file.discussionId) {
+    const discussion = await Discussion.findById(file.discussionId)
+    const allowed = discussion && user.portalType === 'team' && (
+      ['super_admin', 'admin'].includes(user.role)
+      || discussion.participants.some((participant) => participant.equals(user._id))
+    )
+    if (!allowed) throw Object.assign(new Error('File not found or access denied.'), { statusCode: 404 })
+  }
+  if (file.conversationId) {
+    const conversation = await Conversation.findById(file.conversationId)
+    const allowed = conversation && user.portalType === 'team' && (
+      ['super_admin', 'admin'].includes(user.role)
+      || conversation.conversationType !== 'internal' && user.role === 'manager'
+      || conversation.participants.some((participant) => participant.userId.equals(user._id))
+    )
+    if (!allowed) throw Object.assign(new Error('File not found or access denied.'), { statusCode: 404 })
+  }
+}
+
 export async function listFiles(user, query = {}) {
-  const filter = user.portalType === 'client' ? { clientId: user.clientId, visibility: 'client' } : {}
+  const filter = user.portalType === 'client'
+    ? { clientId: user.clientId, visibility: 'client' }
+    : { discussionId: { $exists: false }, conversationId: { $exists: false } }
   for (const field of ['projectId', 'projectRequestId', 'category']) if (query[field]) filter[field] = query[field]
   const files = await FileAsset.find(filter).sort({ createdAt: -1 }).populate('uploadedBy clientId projectId')
   await syncPaymentProofStatuses(files)
@@ -190,6 +245,7 @@ export async function getFile(id, user) {
   if (user.portalType === 'client') Object.assign(filter, { clientId: user.clientId, visibility: 'client' })
   const file = await FileAsset.findOne(filter)
   if (!file) throw Object.assign(new Error('File not found or access denied.'), { statusCode: 404 })
+  await assertPrivateAttachmentAccess(file, user)
   await syncPaymentProofStatuses([file])
   return user.portalType === 'client' ? sanitizeClientFile(file) : file
 }
@@ -197,6 +253,8 @@ export async function getFile(id, user) {
 export async function updateFile(id, input, user) {
   const file = await FileAsset.findOne({ _id: id, ...(user.portalType === 'client' ? { clientId: user.clientId, visibility: 'client' } : {}) })
   if (!file) throw Object.assign(new Error('File not found or access denied.'), { statusCode: 404 })
+  await assertPrivateAttachmentAccess(file, user)
+  if (file.discussionId || file.conversationId) throw Object.assign(new Error('Conversation and discussion attachments are managed by their thread.'), { statusCode: 409 })
   if (file.category === 'payment_proof' && (input.approvalStatus !== undefined || input.category !== undefined)) {
     throw Object.assign(new Error('Payment proof status and category are managed by the payment workflow.'), { statusCode: 409 })
   }
@@ -231,6 +289,8 @@ function sanitizeClientFile(file) {
 export async function deleteFile(id, user) {
   const file = await FileAsset.findOne({ _id: id, ...(user.portalType === 'client' ? { clientId: user.clientId, visibility: 'client' } : {}) })
   if (!file) throw Object.assign(new Error('File not found or access denied.'), { statusCode: 404 })
+  await assertPrivateAttachmentAccess(file, user)
+  if (file.discussionId || file.conversationId) throw Object.assign(new Error('Conversation and discussion attachments are managed by their thread.'), { statusCode: 409 })
   if (user.portalType === 'client' && file.ownerId.toString() !== user._id.toString()) throw Object.assign(new Error('You cannot delete this file.'), { statusCode: 403 })
   if (file.paymentId || await Payment.exists({ proofFiles: file._id })) {
     throw Object.assign(new Error('Payment evidence is part of the financial record and cannot be deleted.'), { statusCode: 409 })

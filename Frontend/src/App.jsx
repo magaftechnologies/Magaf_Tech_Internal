@@ -8,6 +8,7 @@ import RecordDetail from './components/RecordDetail'
 import RecordModal from './components/RecordModal'
 import ClientPortal from './components/ClientPortal'
 import TeamMessages from './components/TeamMessages'
+import DiscussionsPage from './components/DiscussionsPage'
 import AccountSecurity from './components/AccountSecurity'
 import FinanceProfile from './components/FinanceProfile'
 import StudentDetail from './components/StudentDetail'
@@ -53,6 +54,7 @@ function Workspace() {
   let content
   if(page==='dashboard'||!page)content=<Dashboard navigate={navigate} quickAdd={quickAdd}/>
   else if(page==='messages')content=<TeamMessages key={id||'all'} conversationId={id}/>
+  else if(page==='discussions')content=<DiscussionsPage key={id||'all'} id={id} navigate={navigate}/>
   else if(page==='finance'&&id==='company')content=<FinanceProfile ownerType="company" navigate={navigate}/>
   else if(page==='finance'&&id==='founders'&&subId)content=<FinanceProfile ownerType="founder" ownerId={subId} navigate={navigate}/>
   else if(page==='students'&&id)content=<StudentDetail id={id} paymentId={routeParams.get('payment')} navigate={navigate} quickAdd={quickAdd}/>

@@ -17,7 +17,15 @@ export async function authenticate(req, _res, next) {
       error.statusCode = 401
       throw error
     }
+    if (user.mustChangePassword) {
+      const isAllowedPasswordRoute = req.baseUrl === '/api/auth'
+        && ((req.method === 'GET' && req.path === '/me') || (req.method === 'POST' && req.path === '/change-password'))
+      if (!payload.passwordChangeOnly || !isAllowedPasswordRoute) {
+        throw Object.assign(new Error('Change your temporary password before accessing the workspace.'), { statusCode: 403 })
+      }
+    }
     req.user = user
+    req.auth = payload
     next()
   } catch (error) {
     if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') error.statusCode = 401

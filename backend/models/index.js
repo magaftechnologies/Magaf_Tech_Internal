@@ -14,6 +14,8 @@ const safeJson = {
       delete value._id
       delete value.__v
       delete value.passwordHash
+      delete value.temporaryPasswordExpiresAt
+      delete value.temporaryPasswordUsedAt
       return value
     },
   },
@@ -38,6 +40,8 @@ export const User = make('User', {
   portalType: { type: String, enum: ['team', 'client'], default: 'team', index: true },
   clientId: { type: objectId, ref: 'Client', index: true },
   mustChangePassword: { type: Boolean, default: false },
+  temporaryPasswordExpiresAt: Date,
+  temporaryPasswordUsedAt: Date,
   tokenVersion: { type: Number, default: 0 },
   profileImage: String,
   department: String,
@@ -446,6 +450,8 @@ export const FileAsset = make('File', {
   projectId: { type: objectId, ref: 'Project', index: true },
   paymentId: { type: objectId, ref: 'Payment', index: true },
   projectRequestId: { type: objectId, ref: 'ProjectRequest', index: true },
+  conversationId: { type: objectId, ref: 'Conversation', index: true },
+  discussionId: { type: objectId, ref: 'ServiceDiscussion', index: true },
   clientId: { type: objectId, ref: 'Client', index: true },
   serviceId: { type: objectId, ref: 'Service' },
   uploadedBy: { type: objectId, ref: 'User', required: true },
@@ -499,7 +505,8 @@ export const ProductIdea = make('ProductIdea', {
 
 export const Conversation = make('Conversation', {
   conversationCode: { type: String, unique: true, sparse: true },
-  clientId: { type: objectId, ref: 'Client', required: true, index: true },
+  conversationType: { type: String, enum: ['client', 'internal'], default: 'client', index: true },
+  clientId: { type: objectId, ref: 'Client', index: true },
   projectId: { type: objectId, ref: 'Project', index: true },
   projectRequestId: { type: objectId, ref: 'ProjectRequest', index: true },
   serviceId: { type: objectId, ref: 'Service', index: true },
@@ -510,13 +517,32 @@ export const Conversation = make('Conversation', {
   ...auditFields,
 }, { indexes: [{ fields: { clientId: 1, projectId: 1 } }] })
 
+export const Discussion = make('ServiceDiscussion', {
+  serviceId: { type: objectId, ref: 'Service', required: true, index: true },
+  title: { type: String, required: true, trim: true, maxlength: 200 },
+  category: { type: String, trim: true, maxlength: 120 },
+  status: { type: String, enum: ['open', 'in_progress', 'resolved', 'archived'], default: 'open', index: true },
+  participants: [{ type: objectId, ref: 'User' }],
+  createdBy: { type: objectId, ref: 'User', required: true },
+  lastActivityAt: { type: Date, default: Date.now, index: true },
+}, { indexes: [{ fields: { serviceId: 1, lastActivityAt: -1 } }] })
+
+export const DiscussionMessage = make('ServiceDiscussionMessage', {
+  discussionId: { type: objectId, ref: 'ServiceDiscussion', required: true, index: true },
+  senderId: { type: objectId, ref: 'User', required: true },
+  content: { type: String, trim: true, maxlength: 10000, default: '' },
+  attachments: [{ type: objectId, ref: 'File' }],
+  isDeleted: { type: Boolean, default: false },
+  ...auditFields,
+}, { indexes: [{ fields: { discussionId: 1, createdAt: 1 } }] })
+
 export const Message = make('Message', {
   conversationId: { type: objectId, ref: 'Conversation', required: true, index: true },
   senderId: { type: objectId, ref: 'User', required: true },
   senderType: { type: String, enum: ['client', 'team'], required: true },
   recipientId: { type: objectId, ref: 'User' },
   recipientType: { type: String, enum: ['client', 'team'] },
-  clientId: { type: objectId, ref: 'Client', required: true, index: true },
+  clientId: { type: objectId, ref: 'Client', index: true },
   projectId: { type: objectId, ref: 'Project', index: true },
   messageType: { type: String, enum: MESSAGE_TYPES, default: 'text' },
   content: { type: String, maxlength: 10000, default: '' },

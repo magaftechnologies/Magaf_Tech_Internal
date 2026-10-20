@@ -20,7 +20,7 @@ const serviceNames = {
 }
 
 const statusAliases = {
-  projects: { proposal: 'planning', awaiting_client: 'pending_review', deal_accepted: 'accepted', payment_pending: 'planning', requirement_gathering: 'planning', design: 'in_progress', development: 'in_progress', testing: 'review', client_review: 'review', approved: 'review', ready_for_delivery: 'review', deployment: 'in_progress', paused: 'on_hold', revision_requested: 'revision' },
+  projects: { proposal: 'planning', awaiting_client: 'pending_review', deal_accepted: 'accepted', payment_pending: 'planning', requirement_gathering: 'planning', design: 'in_progress', development: 'in_progress', testing: 'review', client_review: 'review', ready_for_delivery: 'review', deployment: 'in_progress', paused: 'on_hold', revision_requested: 'revision' },
   requests: { 'converted_to_project': 'converted_to_project' },
   clients: { returning: 'active', active_client: 'active', qualified: 'discussion', converted: 'active', archived: 'inactive' },
   leads: { meeting_scheduled: 'contacted', follow_up: 'contacted' },
@@ -58,6 +58,10 @@ export function normalizeRecord(collection, record) {
   if (!record) return record
   const normalized = { ...record, id: idOf(record.id || record._id) }
   if (collection === 'services') return normalizeService(normalized)
+  if (collection === 'users') return {
+    ...normalized,
+    status: normalized.isActive ? 'Active' : 'Inactive',
+  }
   if (collection === 'clients') return {
     ...normalized,
     contact: normalized.contactName || normalized.name,
@@ -86,6 +90,7 @@ export function normalizeRecord(collection, record) {
     clientId: idOf(normalized.clientId),
     serviceId: idOf(normalized.serviceId),
     requestId: idOf(normalized.requestId),
+    assignedToId: idOf(normalized.projectManager) || idOf(normalized.assignedTeamMembers?.[0]),
     agreedAmount: normalized.finalAmount ?? normalized.quotedAmount ?? normalized.budget ?? 0,
     balance: normalized.balanceAmount ?? 0,
     assignedTo: nameOf(normalized.projectManager) || (normalized.assignedTeamMembers || []).map(nameOf).join(', '),
@@ -175,6 +180,7 @@ export function normalizeRecord(collection, record) {
     projectId: idOf(normalized.projectId),
     clientId: idOf(normalized.projectId?.clientId),
     assignedTo: nameOf(normalized.assignedTo),
+    assignedToId: idOf(normalized.assignedTo),
     deadline: normalized.dueDate,
     status: textStatus(normalized.status),
     priority: textStatus(normalized.priority),
@@ -222,6 +228,11 @@ export function normalizeRecord(collection, record) {
     projectId: idOf(normalized.projectId),
     projectRequestId: idOf(normalized.projectRequestId),
     participantIds: (normalized.participants || []).map((participant) => idOf(participant.userId)),
+    participants: (normalized.participants || []).map((participant) => ({
+      ...participant,
+      userId: idOf(participant.userId),
+      user: participant.userId && typeof participant.userId === 'object' ? participant.userId : null,
+    })),
   }
   if (collection === 'messages') return {
     ...normalized,
@@ -334,22 +345,30 @@ export function serializeRecord(collection, values, data = {}) {
   }
   if (collection === 'projects') {
     payload.projectName = payload.projectName || payload.name
-    payload.finalAmount = payload.finalAmount ?? payload.agreedAmount
+    payload.finalAmount = payload.agreedAmount !== undefined ? payload.agreedAmount : payload.finalAmount
     payload.projectType = payload.projectType || payload.type
     payload.existingTechnology = payload.existingTechnology || payload.technologyStack
-    payload.projectManager = assignedId(payload.projectManager || payload.assignedTo)
-    payload.assignedTeamMembers = payload.assignedTeamMembers || (payload.assignedTo ? [assignedId(payload.assignedTo)] : undefined)
+    const hasAssigneeSelection = Object.hasOwn(payload, 'assignedToId')
+    const selectedAssignee = hasAssigneeSelection ? payload.assignedToId : payload.projectManager || payload.assignedTo
+    if (hasAssigneeSelection || payload.projectManager || payload.assignedTo) {
+      const assignedProjectManager = selectedAssignee ? assignedId(selectedAssignee) : null
+      payload.projectManager = assignedProjectManager
+      payload.assignedTeamMembers = assignedProjectManager ? [assignedProjectManager] : []
+    }
     delete payload.name
     delete payload.agreedAmount
     delete payload.balance
     delete payload.type
     delete payload.technologyStack
     delete payload.assignedTo
+    delete payload.assignedToId
   }
   if (collection === 'deals') payload.assignedTo = assignedId(payload.assignedTo)
   if (collection === 'users') {
     payload.password ||= payload.portalPassword
+    if (payload.status !== undefined) payload.isActive = enumStatus(payload.status) === 'active'
     delete payload.portalPassword
+    delete payload.status
   }
   if (collection === 'payments') {
     payload.paymentDate = payload.paymentDate || payload.date
@@ -409,7 +428,10 @@ export function serializeRecord(collection, values, data = {}) {
   }
   if (collection === 'tasks') {
     payload.dueDate = payload.dueDate || payload.deadline
-    payload.assignedTo = assignedId(payload.assignedTo)
+    payload.assignedTo = Object.hasOwn(payload, 'assignedToId')
+      ? payload.assignedToId ? assignedId(payload.assignedToId) : null
+      : assignedId(payload.assignedTo)
+    delete payload.assignedToId
     delete payload.deadline
     delete payload.clientVisible
     delete payload.clientId

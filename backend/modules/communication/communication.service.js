@@ -8,7 +8,9 @@ async function canAccessConversation(conversationId, user) {
   if (user.portalType === 'client') filter.clientId = user.clientId
   const conversation = await Conversation.findOne(filter)
   if (!conversation) throw Object.assign(new Error('Conversation not found or access denied.'), { statusCode: 404 })
-  if (user.portalType === 'team' && !['super_admin', 'admin', 'manager'].includes(user.role)) {
+  const hasGlobalAccess = ['super_admin', 'admin'].includes(user.role)
+    || conversation.conversationType !== 'internal' && user.role === 'manager'
+  if (user.portalType === 'team' && !hasGlobalAccess) {
     const isParticipant = conversation.participants.some((participant) => idOf(participant.userId) === idOf(user._id))
     if (!isParticipant) throw Object.assign(new Error('You are not a participant in this conversation.'), { statusCode: 403 })
   }
@@ -16,8 +18,16 @@ async function canAccessConversation(conversationId, user) {
 }
 
 export async function listConversations(user) {
-  const filter = user.portalType === 'client' ? { clientId: user.clientId, status: { $ne: 'archived' } } : { status: { $ne: 'archived' } }
-  if (user.portalType === 'team' && !['super_admin', 'admin', 'manager'].includes(user.role)) filter['participants.userId'] = user._id
+  const filter = user.portalType === 'client'
+    ? { conversationType: 'client', clientId: user.clientId, status: { $ne: 'archived' } }
+    : { status: { $ne: 'archived' } }
+  if (user.portalType === 'team' && ['super_admin', 'admin'].includes(user.role) === false) {
+    if (user.role === 'manager') {
+      filter.$or = [{ conversationType: { $ne: 'internal' } }, { 'participants.userId': user._id }]
+    } else {
+      filter['participants.userId'] = user._id
+    }
+  }
   const rows = await Conversation.find(filter).sort({ lastMessageAt: -1, createdAt: -1 }).populate('clientId projectId serviceId participants.userId')
   return rows.map((conversation) => {
     const json = conversation.toJSON()
@@ -31,6 +41,31 @@ export async function listConversations(user) {
 }
 
 export async function createConversation(input, user) {
+  if (user.portalType === 'team' && input.recipientId) {
+    const recipient = await User.findOne({ _id: input.recipientId, portalType: 'team', isActive: true }).select('_id')
+    if (!recipient) throw Object.assign(new Error('Choose an active internal team member.'), { statusCode: 400 })
+    if (recipient._id.equals(user._id)) throw Object.assign(new Error('Choose another team member to start a conversation.'), { statusCode: 400 })
+    const existing = await Conversation.findOne({
+      conversationType: 'internal',
+      status: 'open',
+      participants: { $size: 2 },
+      $and: [
+        { 'participants.userId': user._id },
+        { 'participants.userId': recipient._id },
+      ],
+    }).populate('participants.userId')
+    if (existing) return existing
+    const conversation = await Conversation.create({
+      conversationType: 'internal',
+      participants: [
+        { userId: user._id, participantType: 'team' },
+        { userId: recipient._id, participantType: 'team' },
+      ],
+      createdBy: user._id,
+    })
+    await recordActivity({ actor: user._id, action: 'conversation.created', entityType: 'conversation', entityId: conversation._id, description: 'An internal team conversation was created.' })
+    return conversation.populate('participants.userId')
+  }
   const clientId = user.portalType === 'client' ? user.clientId : input.clientId
   if (!clientId) throw Object.assign(new Error('clientId is required.'), { statusCode: 400 })
   const client = await Client.findById(clientId)
@@ -69,6 +104,7 @@ export async function createConversation(input, user) {
     ...team.map(({ _id }) => ({ userId: _id, participantType: 'team' })),
   ]
   const conversation = await Conversation.create({
+    conversationType: 'client',
     clientId,
     projectId: project?._id,
     projectRequestId: project ? undefined : request?._id,
@@ -117,14 +153,25 @@ export async function sendMessage(input, user) {
   if (!content && !(input.attachments || []).length) throw Object.assign(new Error('A message must contain text or an attachment.'), { statusCode: 400 })
   const attachmentIds = input.attachments || []
   if (attachmentIds.length) {
-    const attachments = await FileAsset.find({ _id: { $in: attachmentIds }, ...(senderType === 'client' ? { clientId: user.clientId, visibility: 'client' } : {}) })
+    const attachmentFilter = senderType === 'client'
+      ? { clientId: user.clientId, visibility: 'client' }
+      : conversation.conversationType === 'internal'
+        ? { conversationId: conversation._id }
+        : {
+          $or: [
+            { conversationId: conversation._id },
+            ...(conversation.projectId ? [{ projectId: conversation.projectId }] : []),
+            ...(conversation.projectRequestId ? [{ projectRequestId: conversation.projectRequestId }] : []),
+          ],
+        }
+    const attachments = await FileAsset.find({ _id: { $in: attachmentIds }, ...attachmentFilter })
     if (attachments.length !== attachmentIds.length) throw Object.assign(new Error('One or more attachments are unavailable.'), { statusCode: 400 })
   }
   const message = await Message.create({
     conversationId: conversation._id,
     senderId: user._id,
     senderType,
-    recipientType: senderType === 'client' ? 'team' : 'client',
+    recipientType: senderType === 'client' || conversation.conversationType === 'internal' ? 'team' : 'client',
     clientId: conversation.clientId,
     projectId: conversation.projectId,
     messageType: input.messageType || 'text',
@@ -138,7 +185,9 @@ export async function sendMessage(input, user) {
   const teamParticipantIds = conversation.participants
     .filter((participant) => participant.participantType === 'team')
     .map((participant) => participant.userId)
-  const recipients = senderType === 'client'
+  const recipients = conversation.conversationType === 'internal'
+    ? await User.find({ _id: { $in: conversation.participants.map((participant) => participant.userId).filter((participantId) => !participantId.equals(user._id)) }, isActive: true }).select('_id')
+    : senderType === 'client'
     ? await User.find({
       portalType: 'team',
       isActive: true,
@@ -168,7 +217,9 @@ export async function markRead(messageId, user) {
   if (!message || !message.conversationId) throw Object.assign(new Error('Message not found.'), { statusCode: 404 })
   await canAccessConversation(message.conversationId._id, user)
   const isSender = message.senderId.equals(user._id)
-  const receiptRoleMatches = message.senderType === 'client' ? user.portalType === 'team' : user.portalType === 'client'
+  const receiptRoleMatches = message.conversationId.conversationType === 'internal'
+    ? user.portalType === 'team'
+    : message.senderType === 'client' ? user.portalType === 'team' : user.portalType === 'client'
   if (isSender || !receiptRoleMatches) throw Object.assign(new Error('Only the recipient side can mark this message as read.'), { statusCode: 403 })
   const alreadyRead = message.readReceipts.some((receipt) => idOf(receipt.userId) === idOf(user._id))
   if (!alreadyRead) {

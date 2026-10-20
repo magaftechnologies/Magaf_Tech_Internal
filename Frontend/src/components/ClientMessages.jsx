@@ -60,11 +60,11 @@ export function MessageCenter({
   </div>
 }
 
-export function MessageBubble({ item, own, clientView = false }) {
+export function MessageBubble({ item, own, clientView = false, internal = false }) {
   const receipts = item.readReceipts || []
   const teamReaders = receipts.filter((receipt) => receipt.role === 'TEAM')
   const clientRead = receipts.some((receipt) => receipt.role === 'CLIENT')
-  const author = own ? `You · ${item.senderName}` : clientView ? `MAGAF Team · ${item.senderName}` : `${item.senderName} · Client`
+  const author = internal ? `${own ? 'You' : item.senderName} · Team` : own ? `You · ${item.senderName}` : clientView ? `MAGAF Team · ${item.senderName}` : `${item.senderName} · Client`
 
   return <article className={`client-message-bubble ${own ? 'own' : ''}`}>
     <span className="client-message-author">{author}</span>

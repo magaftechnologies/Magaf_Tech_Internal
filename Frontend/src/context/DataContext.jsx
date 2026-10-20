@@ -63,7 +63,7 @@ export function DataProvider({ children }) {
   const [revenueSeries, setRevenueSeries] = useState([])
 
   const refresh = useCallback(async ({ showLoading = false } = {}) => {
-    if (!user) {
+    if (!user || user.mustChangePassword) {
       setData(emptyData())
       setDashboard(null)
       setRevenueSeries([])
@@ -298,6 +298,8 @@ export function DataProvider({ children }) {
       clientId: item.clientId,
       projectId: item.projectId,
       projectRequestId: item.projectRequestId || item.requestId,
+      conversationId: item.conversationId,
+      discussionId: item.discussionId,
       category: ({
         input: 'input', image: 'input', reference: 'reference', video: 'reference', audio: 'reference', document: 'requirement', requirement: 'requirement', working: 'draft', draft: 'draft',
         revision: 'revision', output: 'final_output', final: 'final_output', payment_proof: 'payment_proof', 'payment proof': 'payment_proof', archive: 'archive',
@@ -434,7 +436,9 @@ export function DataProvider({ children }) {
   )
 
   const ensureConversation = (clientId, projectId, projectRequestId) => mutate(
-    () => conversationsApi.create({ clientId, projectId: projectId || undefined, projectRequestId: projectRequestId || undefined }),
+    () => conversationsApi.create(clientId && typeof clientId === 'object'
+      ? clientId
+      : { clientId, projectId: projectId || undefined, projectRequestId: projectRequestId || undefined }),
     'conversations',
   )
   const sendMessage = ({ conversationId, text, attachments = [] }) => mutate(

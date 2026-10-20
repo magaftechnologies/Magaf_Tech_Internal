@@ -50,7 +50,8 @@ async function seed() {
   if (missingFounders.length) {
     if (!password) throw new Error('Set INITIAL_ADMIN_PASSWORD to create missing founder accounts.')
     const passwordHash = await bcrypt.hash(password, 12)
-    await User.insertMany(missingFounders.map((founder) => ({ ...founder, passwordHash })), { ordered: true })
+    const temporaryPasswordExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    await User.insertMany(missingFounders.map((founder) => ({ ...founder, passwordHash, temporaryPasswordExpiresAt })), { ordered: true })
   }
 
   for (const [index, [name, slug, category, description, features]] of services.entries()) {

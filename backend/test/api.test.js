@@ -103,6 +103,108 @@ test('MAGAF backend enforces client isolation and synchronizes core business flo
     await request(app).post('/api/auth/login').send({ email: 'manager@test.magaf', password: 'NewSecurePassword123!' }).expect(200)
   })
 
+  await t.test('administrator password resets are one-time, expiring and locked to password change', async () => {
+    const admin = await models.User.create({
+      name: 'Reset Administrator',
+      email: 'reset-admin@test.magaf',
+      passwordHash: await bcrypt.hash('SecureTestPassword123!', 4),
+      role: 'admin',
+      portalType: 'team',
+    })
+    const target = await models.User.create({
+      name: 'Reset Target',
+      email: 'reset-target@test.magaf',
+      passwordHash: await bcrypt.hash('SecureTestPassword123!', 4),
+      role: 'admin',
+      portalType: 'team',
+    })
+    const adminLogin = await request(app).post('/api/auth/login')
+      .send({ email: admin.email, password: 'SecureTestPassword123!' })
+      .expect(200)
+    const targetLogin = await request(app).post('/api/auth/login')
+      .send({ email: target.email, password: 'SecureTestPassword123!' })
+      .expect(200)
+
+    await request(app).post(`/api/auth/users/${target.id}/reset-password`).expect(401)
+    await request(app).post(`/api/auth/users/${target.id}/reset-password`)
+      .set('Authorization', `Bearer ${teamToken}`)
+      .expect(403)
+    const protectedSuperAdmin = await models.User.create({
+      name: 'Protected Super Administrator',
+      email: 'protected-super-admin@test.magaf',
+      passwordHash: await bcrypt.hash('SecureTestPassword123!', 4),
+      role: 'super_admin',
+      portalType: 'team',
+    })
+    await request(app).post(`/api/auth/users/${protectedSuperAdmin.id}/reset-password`)
+      .set('Authorization', `Bearer ${adminLogin.body.data.token}`)
+      .expect(403)
+    const reset = await request(app).post(`/api/auth/users/${target.id}/reset-password`)
+      .set('Authorization', `Bearer ${adminLogin.body.data.token}`)
+      .expect(200)
+    assert.equal(reset.headers['cache-control'], 'no-store, private')
+    assert.equal(typeof reset.body.data.temporaryPassword, 'string')
+    assert.ok(reset.body.data.temporaryPassword.length >= 20)
+    assert.ok(new Date(reset.body.data.expiresAt) > new Date())
+
+    const savedTarget = await models.User.findById(target.id).select('+passwordHash')
+    assert.notEqual(savedTarget.passwordHash, reset.body.data.temporaryPassword)
+    assert.equal(await bcrypt.compare(reset.body.data.temporaryPassword, savedTarget.passwordHash), true)
+    assert.equal(savedTarget.mustChangePassword, true)
+    assert.ok(savedTarget.temporaryPasswordExpiresAt)
+    assert.equal(savedTarget.temporaryPasswordUsedAt, undefined)
+    assert.equal('temporaryPassword' in savedTarget.toJSON(), false)
+    await request(app).get('/api/projects')
+      .set('Authorization', `Bearer ${targetLogin.body.data.token}`)
+      .expect(401)
+
+    const temporaryLogin = await request(app).post('/api/auth/login')
+      .send({ email: target.email, password: reset.body.data.temporaryPassword })
+      .expect(200)
+    assert.equal(temporaryLogin.body.data.user.mustChangePassword, true)
+    const restrictedMe = await request(app).get('/api/auth/me')
+      .set('Authorization', `Bearer ${temporaryLogin.body.data.token}`)
+      .expect(200)
+    assert.equal(restrictedMe.body.data.user.mustChangePassword, true)
+    assert.equal('temporaryPasswordExpiresAt' in restrictedMe.body.data.user, false)
+    await request(app).get('/api/projects')
+      .set('Authorization', `Bearer ${temporaryLogin.body.data.token}`)
+      .expect(403)
+    await request(app).post('/api/auth/login')
+      .send({ email: target.email, password: reset.body.data.temporaryPassword })
+      .expect(401)
+
+    const changed = await request(app).post('/api/auth/change-password')
+      .set('Authorization', `Bearer ${temporaryLogin.body.data.token}`)
+      .send({ newPassword: 'ResetCompletedPassword123!' })
+      .expect(200)
+    assert.equal(changed.body.data.user.mustChangePassword, false)
+    await request(app).get('/api/projects')
+      .set('Authorization', `Bearer ${changed.body.data.token}`)
+      .expect(200)
+    await request(app).post('/api/auth/login')
+      .send({ email: target.email, password: reset.body.data.temporaryPassword })
+      .expect(401)
+    await request(app).post('/api/auth/login')
+      .send({ email: target.email, password: 'ResetCompletedPassword123!' })
+      .expect(200)
+
+    const expiredTarget = await models.User.create({
+      name: 'Expired Reset Target',
+      email: 'expired-reset@test.magaf',
+      passwordHash: await bcrypt.hash('SecureTestPassword123!', 4),
+      role: 'team_member',
+      portalType: 'team',
+    })
+    const expiredReset = await request(app).post(`/api/auth/users/${expiredTarget.id}/reset-password`)
+      .set('Authorization', `Bearer ${adminLogin.body.data.token}`)
+      .expect(200)
+    await models.User.updateOne({ _id: expiredTarget.id }, { $set: { temporaryPasswordExpiresAt: new Date(Date.now() - 1000) } })
+    await request(app).post('/api/auth/login')
+      .send({ email: expiredTarget.email, password: expiredReset.body.data.temporaryPassword })
+      .expect(401)
+  })
+
   await t.test('client queries cannot discover another client project or profile', async () => {
     const privateDeal = await models.Deal.create({
       clientId: clientA.id, serviceId: service.id, projectId: projectA.id,
@@ -755,6 +857,90 @@ test('MAGAF backend enforces client isolation and synchronizes core business flo
     assert.ok(clientNotice.body.data.some((notification) => notification.relatedEntityId === conversation.body.data.id && notification.type === 'message'))
   })
 
+  await t.test('founders can start persistent one-to-one internal conversations', async () => {
+    const founderA = await models.User.create({ name: 'Founder Chandu', email: 'founder-chandu@test.magaf', passwordHash: await bcrypt.hash('SecureTestPassword123!', 4), role: 'admin', portalType: 'team' })
+    const founderB = await models.User.create({ name: 'Founder Dilip', email: 'founder-dilip@test.magaf', passwordHash: await bcrypt.hash('SecureTestPassword123!', 4), role: 'admin', portalType: 'team' })
+    const outsider = await models.User.create({ name: 'Unrelated Developer', email: 'outsider@test.magaf', passwordHash: await bcrypt.hash('SecureTestPassword123!', 4), role: 'developer', portalType: 'team' })
+    const [founderALogin, founderBLogin, outsiderLogin] = await Promise.all([founderA, founderB, outsider].map((user) => request(app).post('/api/auth/login').send({ email: user.email, password: 'SecureTestPassword123!' })))
+    const conversation = await request(app).post('/api/conversations')
+      .auth(founderALogin.body.data.token, { type: 'bearer' })
+      .send({ recipientId: founderB.id })
+      .expect(201)
+    assert.equal(conversation.body.data.conversationType, 'internal')
+    const message = await request(app).post('/api/messages')
+      .auth(founderALogin.body.data.token, { type: 'bearer' })
+      .send({ conversationId: conversation.body.data.id, content: 'Founder-only planning discussion.' })
+      .expect(201)
+    const history = await request(app).get(`/api/conversations/${conversation.body.data.id}/messages`)
+      .auth(founderBLogin.body.data.token, { type: 'bearer' })
+      .expect(200)
+    assert.equal(history.body.data[0].content, 'Founder-only planning discussion.')
+    await request(app).get(`/api/conversations/${conversation.body.data.id}/messages`)
+      .auth(outsiderLogin.body.data.token, { type: 'bearer' })
+      .expect(403)
+    await request(app).patch(`/api/messages/${message.body.data.id}/read`)
+      .auth(founderBLogin.body.data.token, { type: 'bearer' })
+      .expect(200)
+    assert.equal((await models.Message.findById(message.body.data.id)).readReceipts.length, 1)
+  })
+
+  await t.test('founders can create persistent service discussions with participant-only access', async () => {
+    const founder = await models.User.create({ name: 'Discussion Founder', email: 'discussion-founder@test.magaf', passwordHash: await bcrypt.hash('SecureTestPassword123!', 4), role: 'admin', portalType: 'team' })
+    const outsider = await models.User.create({ name: 'Discussion Outsider', email: 'discussion-outsider@test.magaf', passwordHash: await bcrypt.hash('SecureTestPassword123!', 4), role: 'developer', portalType: 'team' })
+    const [founderLogin, outsiderLogin] = await Promise.all([founder, outsider].map((user) => request(app).post('/api/auth/login').send({ email: user.email, password: 'SecureTestPassword123!' })))
+    const participant = await models.User.findOne({ email: 'manager@test.magaf' })
+    const thread = await request(app).post('/api/discussions')
+      .auth(founderLogin.body.data.token, { type: 'bearer' })
+      .send({ title: 'Improve software onboarding', serviceId: service.id, category: 'Growth', description: 'Share initial ideas.', participants: [participant.id] })
+      .expect(201)
+    const replies = await request(app).get(`/api/discussions/${thread.body.data.id}/messages`)
+      .auth(teamToken, { type: 'bearer' })
+      .expect(200)
+    assert.equal(replies.body.data[0].content, 'Share initial ideas.')
+    const participantReply = await request(app).post(`/api/discussions/${thread.body.data.id}/messages`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ content: 'Document the first setup steps.' })
+      .expect(201)
+    await request(app).delete(`/api/discussions/${thread.body.data.id}/messages/${participantReply.body.data.id}`)
+      .auth(teamToken, { type: 'bearer' })
+      .expect(200)
+    const removedReply = await models.DiscussionMessage.findById(participantReply.body.data.id)
+    assert.equal(removedReply.isDeleted, true)
+    assert.equal(removedReply.content, '')
+    const privateFile = await models.FileAsset.create({
+      ownerType: 'team',
+      ownerId: participant._id,
+      discussionId: thread.body.data.id,
+      uploadedBy: participant._id,
+      category: 'reference',
+      fileType: 'application',
+      mimeType: 'application/pdf',
+      fileName: 'planning-notes.pdf',
+      originalName: 'planning-notes.pdf',
+      cloudinaryPublicId: 'private/discussion/planning-notes',
+      cloudinaryUrl: 'https://example.test/signed/planning-notes.pdf',
+      resourceType: 'raw',
+      size: 128,
+      visibility: 'internal',
+    })
+    await request(app).post(`/api/discussions/${thread.body.data.id}/messages`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ content: 'See the attached notes.', attachments: [privateFile.id] })
+      .expect(201)
+    const persisted = await request(app).get(`/api/discussions/${thread.body.data.id}/messages`)
+      .auth(founderLogin.body.data.token, { type: 'bearer' })
+      .expect(200)
+    assert.equal(persisted.body.data.length, 3)
+    await request(app).get(`/api/files/${privateFile.id}`).auth(teamToken, { type: 'bearer' }).expect(200)
+    await request(app).get(`/api/files/${privateFile.id}`).auth(outsiderLogin.body.data.token, { type: 'bearer' }).expect(404)
+    await request(app).get(`/api/discussions/${thread.body.data.id}/messages`)
+      .auth(outsiderLogin.body.data.token, { type: 'bearer' })
+      .expect(404)
+    await request(app).get('/api/discussions')
+      .auth(clientAToken, { type: 'bearer' })
+      .expect(403)
+  })
+
   await t.test('mentoring payments, sessions and service extensions use their connected models', async () => {
     const mentoringService = await models.Service.create({ name: 'Mentoring', slug: 'development-mentoring', isActive: true })
     const teamUser = await models.User.findOne({ email: 'manager@test.magaf' })
@@ -920,6 +1106,148 @@ test('MAGAF backend enforces client isolation and synchronizes core business flo
       .expect(200)
   })
 
+  await t.test('project status aliases preserve Approved and allow review completion', async () => {
+    await request(app).patch(`/api/projects/${projectA.id}`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ status: 'in_progress' })
+      .expect(200)
+    const approved = await request(app).patch(`/api/projects/${projectA.id}`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ status: 'approved' })
+      .expect(200)
+    assert.equal(approved.body.data.status, 'approved')
+    await request(app).patch(`/api/projects/${projectA.id}`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ status: 'completed' })
+      .expect(200)
+
+    await request(app).patch(`/api/projects/${projectB.id}`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ status: 'in_progress' })
+      .expect(200)
+    await request(app).patch(`/api/projects/${projectB.id}`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ status: 'review' })
+      .expect(200)
+    const completed = await request(app).patch(`/api/projects/${projectB.id}`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ status: 'completed' })
+      .expect(200)
+    assert.equal(completed.body.data.status, 'completed')
+    assert.ok(await models.Activity.exists({ entityId: projectB.id, 'metadata.oldValue.status': 'review', 'metadata.newValue.status': 'completed' }))
+  })
+
+  await t.test('project agreed amount edits use confirmed paid totals under the finance lock', async () => {
+    const teamUser = await models.User.findOne({ email: 'manager@test.magaf' })
+    await models.Payment.create({
+      clientId: clientA.id,
+      projectId: projectA.id,
+      amount: 750,
+      status: 'paid',
+      paymentMethod: 'upi',
+      verificationStatus: 'verified',
+      recordedBy: teamUser._id,
+    })
+    await models.Payment.create({ clientId: clientA.id, projectId: projectA.id, amount: 500, status: 'pending', paymentMethod: 'upi' })
+    const decreased = await request(app).patch(`/api/projects/${projectA.id}`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ finalAmount: 800 })
+      .expect(200)
+    assert.equal(decreased.body.data.finalAmount, 800)
+    assert.equal(decreased.body.data.paidAmount, 750)
+    assert.equal(decreased.body.data.balanceAmount, 50)
+    const rejected = await request(app).patch(`/api/projects/${projectA.id}`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ finalAmount: 600 })
+      .expect(409)
+    assert.match(rejected.body.message, /confirmed payments of .*750/)
+    const exact = await request(app).patch(`/api/projects/${projectA.id}`)
+      .auth(teamToken, { type: 'bearer' })
+      .send({ finalAmount: 750 })
+      .expect(200)
+    assert.equal(exact.body.data.balanceAmount, 0)
+    assert.equal(exact.body.data.paidAmount, 750)
+
+    const raceProject = await models.Project.create({
+      projectName: 'Concurrent amount change',
+      clientId: clientA.id,
+      serviceId: service.id,
+      finalAmount: 1000,
+      quotedAmount: 1000,
+      balanceAmount: 1000,
+      status: 'planning',
+    })
+    const proof = await createPaymentProof({ user: teamUser, clientId: clientA.id, projectId: raceProject.id })
+    const [amountChange, payment] = await Promise.all([
+      request(app).patch(`/api/projects/${raceProject.id}`).auth(teamToken, { type: 'bearer' }).send({ finalAmount: 600 }),
+      request(app).post('/api/payments').auth(teamToken, { type: 'bearer' }).send({
+        clientId: clientA.id,
+        projectId: raceProject.id,
+        amount: 800,
+        paymentMethod: 'upi',
+        proofFiles: [proof.id],
+      }),
+    ])
+    assert.ok(
+      amountChange.status === 200 && payment.status === 409
+      || amountChange.status === 409 && payment.status === 201,
+      `Expected one finance-lock operation to reject, got amount=${amountChange.status}, payment=${payment.status}.`,
+    )
+    const savedRaceProject = await models.Project.findById(raceProject.id)
+    const [racePaid] = await models.Payment.aggregate([
+      { $match: { projectId: raceProject._id, status: 'paid' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ])
+    assert.ok(Number(savedRaceProject.finalAmount) >= Number(racePaid?.total || 0))
+  })
+
+  await t.test('admins can edit founder profile details but cannot change a peer admin access', async () => {
+    const editor = await models.User.create({ name: 'Admin Editor', email: 'admin-editor@test.magaf', passwordHash: await bcrypt.hash('SecureTestPassword123!', 4), role: 'admin', portalType: 'team' })
+    const founder = await models.User.create({ name: 'Existing Founder', email: 'existing-founder@test.magaf', passwordHash: await bcrypt.hash('SecureTestPassword123!', 4), role: 'admin', portalType: 'team' })
+    await models.Project.updateOne({ _id: projectA.id }, { $set: { projectManager: founder._id, assignedTeamMembers: [founder._id] } })
+    const login = await request(app).post('/api/auth/login').send({ email: editor.email, password: 'SecureTestPassword123!' }).expect(200)
+    const changed = await request(app).patch(`/api/users/${founder.id}`)
+      .auth(login.body.data.token, { type: 'bearer' })
+      .send({ name: 'Updated Founder Name', email: 'updated-founder@test.magaf', phone: '+91 90000 00000', designation: 'Operations Founder', isActive: true, role: 'admin' })
+      .expect(200)
+    assert.equal(changed.body.data.name, 'Updated Founder Name')
+    assert.equal(changed.body.data.designation, 'Operations Founder')
+    assert.equal(changed.body.data.role, 'admin')
+    const projectAssignment = await models.Project.findById(projectA.id)
+    assert.equal(projectAssignment.projectManager.toString(), founder.id)
+    await request(app).patch(`/api/users/${founder.id}`)
+      .auth(login.body.data.token, { type: 'bearer' })
+      .send({ role: 'manager' })
+      .expect(403)
+    await models.User.create({ name: 'Duplicate Email', email: 'taken-founder@test.magaf', passwordHash: await bcrypt.hash('SecureTestPassword123!', 4), role: 'team_member', portalType: 'team' })
+    await request(app).patch(`/api/users/${founder.id}`)
+      .auth(login.body.data.token, { type: 'bearer' })
+      .send({ email: 'taken-founder@test.magaf' })
+      .expect(409)
+    const teammate = await models.User.create({ name: 'Existing Teammate', email: 'existing-teammate@test.magaf', passwordHash: await bcrypt.hash('SecureTestPassword123!', 4), role: 'team_member', portalType: 'team' })
+    const teammateUpdated = await request(app).patch(`/api/users/${teammate.id}`)
+      .auth(login.body.data.token, { type: 'bearer' })
+      .send({ name: 'Updated Teammate', designation: 'Project Coordinator' })
+      .expect(200)
+    assert.equal(teammateUpdated.body.data.name, 'Updated Teammate')
+    assert.equal(teammateUpdated.body.data.designation, 'Project Coordinator')
+  })
+
+  await t.test('only project owners and authorized managers can transition project status', async () => {
+    await models.Project.updateOne({ _id: projectA.id }, { $set: { status: 'planning' } })
+    const developer = await models.User.create({ name: 'Unassigned Developer', email: 'unassigned-dev@test.magaf', passwordHash: await bcrypt.hash('SecureTestPassword123!', 4), role: 'developer', portalType: 'team' })
+    const login = await request(app).post('/api/auth/login').send({ email: developer.email, password: 'SecureTestPassword123!' }).expect(200)
+    await request(app).patch(`/api/projects/${projectA.id}`)
+      .auth(login.body.data.token, { type: 'bearer' })
+      .send({ status: 'in_progress' })
+      .expect(403)
+    await models.Project.updateOne({ _id: projectA.id }, { $set: { assignedTeamMembers: [developer._id] } })
+    await request(app).patch(`/api/projects/${projectA.id}`)
+      .auth(login.body.data.token, { type: 'bearer' })
+      .send({ status: 'in_progress' })
+      .expect(200)
+  })
+
   await t.test('role restrictions and request validation fail closed', async () => {
     const created = await models.User.create({ name: 'Developer', email: 'dev@test.magaf', passwordHash: await bcrypt.hash('SecureTestPassword123!', 4), role: 'developer', portalType: 'team' })
     const login = await request(app).post('/api/auth/login').send({ email: created.email, password: 'SecureTestPassword123!' })
@@ -1009,6 +1337,54 @@ test('MAGAF backend enforces client isolation and synchronizes core business flo
       })
       .expect(201)
     assert.equal(assigned.body.data.projectManager.toString(), teamUser.id.toString())
+  })
+
+  await t.test('active founders remain available for project and task assignments regardless of last login', async () => {
+    const oldLogin = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000)
+    const chandu = await models.User.create({
+      name: 'Chandu',
+      email: 'chandu@test.magaf',
+      passwordHash: await bcrypt.hash('SecureTestPassword123!', 4),
+      role: 'admin',
+      portalType: 'team',
+      isActive: true,
+      lastLogin: oldLogin,
+    })
+    const dilip = await models.User.create({
+      name: 'Dilip',
+      email: 'dilip@test.magaf',
+      passwordHash: await bcrypt.hash('SecureTestPassword123!', 4),
+      role: 'admin',
+      portalType: 'team',
+      isActive: true,
+      lastLogin: oldLogin,
+    })
+    const directory = await request(app).get('/api/team-members')
+      .set('Authorization', `Bearer ${teamToken}`)
+      .expect(200)
+    assert.ok(directory.body.data.some((member) => member.id === chandu.id))
+    assert.ok(directory.body.data.some((member) => member.id === dilip.id))
+
+    for (const founder of [chandu, dilip]) {
+      await request(app).patch(`/api/projects/${projectA.id}`)
+        .set('Authorization', `Bearer ${teamToken}`)
+        .send({ projectManager: founder.id, assignedTeamMembers: [founder.id] })
+        .expect(200)
+      const refreshedProject = await request(app).get(`/api/projects/${projectA.id}`)
+        .set('Authorization', `Bearer ${teamToken}`)
+        .expect(200)
+      assert.equal(refreshedProject.body.data.projectManager.name, founder.name)
+      assert.equal(refreshedProject.body.data.assignedTeamMembers[0].name, founder.name)
+    }
+
+    const task = await request(app).post('/api/tasks')
+      .set('Authorization', `Bearer ${teamToken}`)
+      .send({ projectId: projectA.id, title: 'Founder assignment', assignedTo: dilip.id })
+      .expect(201)
+    const refreshedTask = await request(app).get(`/api/tasks/${task.body.data.id}`)
+      .set('Authorization', `Bearer ${teamToken}`)
+      .expect(200)
+    assert.equal(refreshedTask.body.data.assignedTo.name, dilip.name)
   })
 
   await t.test('Cloudinary-unconfigured uploads reject files explicitly and accept ZIP archives without fake records', async () => {

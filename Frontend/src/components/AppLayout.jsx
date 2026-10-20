@@ -3,11 +3,11 @@ import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
 import Icon from './Icon'
 
-const navigation = [
+const navigationFor = (services) => [
   { label:'WORKSPACE', links:[['Dashboard','grid','dashboard']] },
   { label:'BUSINESS', links:[['Leads','user','leads'],['Clients','users','clients'],['Project requests','file','requests'],['Deals','briefcase','deals'],['Projects','briefcase','projects'],['Payments','card','payments'],['Invoices','file','invoices']] },
-  { label:'COMMUNICATION', links:[['Messages','message','messages']] },
-  { label:'SERVICES', links:[['All services','layers','services'],['Software Development','code','services/software'],['Automation & AI','sparkles','services/automation'],['Advertising & Creative','megaphone','services/creative'],['Content Creation','file','services/content'],['Invitations & Events','calendar','services/events'],['Development Mentoring','graduation','services/mentoring'],['Custom Solutions','layers','services/custom'],['MAGAF Products','sparkles','services/products']] },
+  { label:'COMMUNICATION', links:[['Messages','message','messages'],['Discussions','message','discussions']] },
+  { label:'SERVICES', links:[['All services','layers','services'],...services.map((service)=>[service.shortName,service.icon||'layers',`services/${service.id}`])] },
   { label:'OPERATIONS', links:[['Tasks','check','tasks'],['Revisions','clock','revisions'],['Content & deliverables','file','content'],['Files & assets','file','files'],['Creative assets','sparkles','assets'],['Mentoring dashboard','graduation','students'],['Targets','trend','targets']] },
   { label:'INSIGHTS', links:[['Business analytics','chart','analytics'],['Reports','file','reports'],['Product ideas','sparkles','products']] },
   { label:'TEAM', links:[['Team members','users','team'],['Settings','settings','settings']] },
@@ -16,6 +16,7 @@ const navigation = [
 export default function AppLayout({ route, navigate, children }) {
   const { user, logout } = useAuth()
   const { data, markNotificationRead, markAllNotificationsRead } = useData()
+  const navigation = navigationFor(data.services || [])
   const [collapsed,setCollapsed]=useState(false)
   const [mobileOpen,setMobileOpen]=useState(false)
   const [search,setSearch]=useState('')
@@ -24,8 +25,8 @@ export default function AppLayout({ route, navigate, children }) {
   const [userMenu,setUserMenu]=useState(false)
   const segment=route.split('/')[0]||'dashboard'
   const detail=route.split('/')[1]
-  const pageNames={dashboard:'Dashboard',leads:'Leads',clients:'Clients',requests:'Project requests',deals:'Deals',projects:'Projects',payments:'Payments',invoices:'Invoices',messages:'Messages',services:'Services',tasks:'Tasks',revisions:'Revisions',content:'Content & deliverables',assets:'Creative assets',files:'Files & assets',targets:'Targets',analytics:'Business analytics',reports:'Reports',products:'Product ideas',team:'Team members',students:'Mentoring dashboard',settings:'Settings'}
-  const unreadMessages=data.messages.filter((message)=>message.senderRole==='CLIENT'&&!(message.readReceipts||[]).some((receipt)=>receipt.userId===user?.id)).length
+  const pageNames={dashboard:'Dashboard',leads:'Leads',clients:'Clients',requests:'Project requests',deals:'Deals',projects:'Projects',payments:'Payments',invoices:'Invoices',messages:'Messages',discussions:'Discussions',services:'Services',tasks:'Tasks',revisions:'Revisions',content:'Content & deliverables',assets:'Creative assets',files:'Files & assets',targets:'Targets',analytics:'Business analytics',reports:'Reports',products:'Product ideas',team:'Team members',students:'Mentoring dashboard',settings:'Settings'}
+  const unreadMessages=data.messages.filter((message)=>(message.senderRole==='CLIENT'||data.conversations.find((conversation)=>conversation.id===message.conversationId)?.conversationType==='internal'&&message.senderId!==user?.id)&&!(message.readReceipts||[]).some((receipt)=>receipt.userId===user?.id)).length
   const pendingPayments=data.payments.filter((payment)=>['Submitted','Under Verification','Correction Requested','Disputed'].includes(payment.status)||payment.verificationStatus==='Awaiting Second Approval').length
   const results=useMemo(()=>{
     if(search.trim().length<2)return []
@@ -69,7 +70,7 @@ export default function AppLayout({ route, navigate, children }) {
     <aside className={`sidebar ${mobileOpen?'mobile-open':''}`}>
       <div className="brand-lockup"><span className="brand-mark">M<span>.</span></span><span className="brand-copy"><strong>MAGAF</strong><small>BUSINESS HUB</small></span><button className="collapse-button" onClick={()=>setCollapsed(!collapsed)} aria-label="Collapse sidebar">‹</button></div>
       <div className="workspace-switch"><span className="workspace-avatar">M</span><span><strong>MAGAF Technologies</strong><small>Internal workspace</small></span><b>⌄</b></div>
-      <nav className="side-nav" aria-label="Main navigation">{navigation.map(group=><div className="nav-group" key={group.label}><span className="nav-label">{group.label}</span>{group.links.map(([label,icon,path])=>{const active=route===path||(!detail&&segment===path.split('/')[0]&&path==='services');return <button className={`nav-link ${active?'active':''}`} key={path} title={collapsed?label:undefined} onClick={()=>openRoute(path)}><Icon name={icon} size={17}/><span>{label}</span>{path==='leads'&&<small className="nav-count">{data.leads.filter(l=>!['Converted','Lost'].includes(l.status)).length}</small>}{path==='payments'&&pendingPayments>0&&<small className="nav-count">{pendingPayments}</small>}{path==='messages'&&unreadMessages>0&&<small className="nav-count">{unreadMessages}</small>}</button>})}</div>)}</nav>
+      <nav className="side-nav" aria-label="Main navigation">{navigation.map(group=><div className="nav-group" key={group.label}><span className="nav-label">{group.label}</span>{group.links.map(([label,icon,path])=>{const active=route===path||path==='services'&&segment==='services'||path==='discussions'&&segment==='discussions';return <button className={`nav-link ${active?'active':''}`} key={path} title={collapsed?label:undefined} onClick={()=>openRoute(path)}><Icon name={icon} size={17}/><span>{label}</span>{path==='leads'&&<small className="nav-count">{data.leads.filter(l=>!['Converted','Lost'].includes(l.status)).length}</small>}{path==='payments'&&pendingPayments>0&&<small className="nav-count">{pendingPayments}</small>}{path==='messages'&&unreadMessages>0&&<small className="nav-count">{unreadMessages}</small>}</button>})}</div>)}</nav>
       <div className="sidebar-bottom"><div className="demo-card"><span className="demo-dot"/><span><strong>LIVE DATA</strong><small>Connected to MAGAF API</small></span></div><button className="sidebar-user" onClick={()=>logout()}><span className="user-avatar">{user?.name?.slice(0,1)||'M'}</span><span><strong>{user?.name||'Founder'}</strong><small>{String(user?.role||'team member').replaceAll('_',' ')}</small></span><Icon name="logout" size={16}/></button></div>
     </aside>
     <main className="main-shell">
